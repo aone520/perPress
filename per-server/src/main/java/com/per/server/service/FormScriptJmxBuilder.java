@@ -82,7 +82,7 @@ public class FormScriptJmxBuilder {
                 jmx.append("      <hashTree>\n");
                 // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发
                 appendConstantThroughputTimer(jmx, "tg0", (long) tps * 60 / (double) threads);
-                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def);
+                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def, targetMode);
                 jmx.append("      </hashTree>\n");
             }
             case "STEPPED" -> appendSteppedGroups(jmx, legacyDef, samplers, fileNames, config);
@@ -92,7 +92,7 @@ public class FormScriptJmxBuilder {
                 int duration = config != null && config.getDurationSeconds() != null ? config.getDurationSeconds() : 300;
                 appendConcurrentThreadGroup(jmx, legacyDef, threads, rampup, duration);
                 jmx.append("      <hashTree>\n");
-                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def);
+                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def, targetMode);
                 jmx.append("      </hashTree>\n");
             }
         }
@@ -144,7 +144,7 @@ public class FormScriptJmxBuilder {
                     jmx.append("      <hashTree>\n");
                     // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发（底线：TPS 压测不得超过配置值）
                     appendConstantThroughputTimer(jmx, prefix, unitTpsPerMin[u] / (double) threads);
-                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
+                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode);
                     jmx.append("      </hashTree>\n");
                 }
             }
@@ -170,7 +170,7 @@ public class FormScriptJmxBuilder {
                             // TPS 阶梯段用 CTT（每线程独立限速）：无 PTT 延迟段补发爆发，各段互不干扰
                             appendConstantThroughputTimer(jmx, prefix, (long) value * 60 / (double) threads);
                         }
-                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
+                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode);
                         jmx.append("      </hashTree>\n");
                     }
                 }
@@ -185,7 +185,7 @@ public class FormScriptJmxBuilder {
                     appendNamedPropertyThreadGroup(jmx, unitDisplayName(units.get(u), prefix), prefix,
                             Math.max(1, unitThreads[u]), rampup, 0, duration);
                     jmx.append("      <hashTree>\n");
-                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
+                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode);
                     jmx.append("      </hashTree>\n");
                 }
             }
@@ -270,11 +270,13 @@ public class FormScriptJmxBuilder {
      * @param fileNames   CSV 引用的文件ID → 原始文件名映射
      * @param thinkTimeMs 思考时间（毫秒）
      * @param def         表单场景定义（取全局配置用于相对路径补全）
+     * @param mode        压测模式（FIXED_TPS 时串行链路内渲染接口级吞吐量控制器漏斗）
      */
     private void appendUnitSamplers(StringBuilder jmx, ExecUnit unit,
-                                    Map<Long, String> fileNames, Long thinkTimeMs, ScriptFormRequest.FormDef def) {
+                                    Map<Long, String> fileNames, Long thinkTimeMs,
+                                    ScriptFormRequest.FormDef def, String mode) {
         for (ScriptFormRequest.Sampler sampler : unit.samplers()) {
-            appendSampler(jmx, sampler, fileNames, globalConfig(def));
+            appendSampler(jmx, sampler, fileNames, globalConfig(def), fixedTpsMode(mode));
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
@@ -309,7 +311,7 @@ public class FormScriptJmxBuilder {
                 // TPS 阶梯段用 CTT：每线程独立限速（组吞吐÷组线程数），无补发爆发、各段独立叠加
                 appendConstantThroughputTimer(jmx, "tg" + i, (long) segment.getValue() * 60 / (double) threads);
             }
-            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames, def);
+            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames, def, "STEPPED");
             jmx.append("      </hashTree>\n");
         }
     }
@@ -429,11 +431,13 @@ public class FormScriptJmxBuilder {
      * @param thinkTimeMs 思考时间（毫秒）
      * @param fileNames   CSV 引用的文件ID → 原始文件名映射
      * @param def         表单场景定义（取全局配置用于相对路径补全）
+     * @param mode        压测模式（FIXED_TPS 时串行链路内渲染接口级吞吐量控制器漏斗）
      */
     private void appendSamplers(StringBuilder jmx, List<ScriptFormRequest.Sampler> samplers,
-                                Long thinkTimeMs, Map<Long, String> fileNames, ScriptFormRequest.FormDef def) {
+                                Long thinkTimeMs, Map<Long, String> fileNames,
+                                ScriptFormRequest.FormDef def, String mode) {
         for (ScriptFormRequest.Sampler sampler : samplers) {
-            appendSampler(jmx, sampler, fileNames, globalConfig(def));
+            appendSampler(jmx, sampler, fileNames, globalConfig(def), fixedTpsMode(mode));
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
@@ -491,20 +495,30 @@ public class FormScriptJmxBuilder {
     }
 
     /**
-     * 追加单个采样器：CSVDataSet 列表 + HTTPSamplerProxy + HeaderManager + ResponseAssertion + 参数提取器
+     * 追加单个采样器：CSVDataSet 列表 + HTTPSamplerProxy + HeaderManager + ResponseAssertion + 参数提取器；
+     * FIXED_TPS 模式且配置了接口流量占比（0<p<100）时，采样器包一层 ThroughputController（百分比模式）
+     * 形成串行链路漏斗（如登录100→查价100→下单60→支付30），占比为空/100 时不包裹（结构与旧版一致）
      *
      * @param jmx           JMX 输出缓冲
      * @param sampler       采样器定义
      * @param fileNames     CSV 引用的文件ID → 原始文件名映射
      * @param globalConfig  全局配置（采样器 url 为相对路径时补全协议/域名/端口）
+     * @param funnelEnabled 是否启用接口级漏斗（仅 FIXED_TPS 模式为 true）
      */
     private void appendSampler(StringBuilder jmx, ScriptFormRequest.Sampler sampler,
-                               Map<Long, String> fileNames, ScriptFormRequest.Config globalConfig) {
+                               Map<Long, String> fileNames, ScriptFormRequest.Config globalConfig,
+                               boolean funnelEnabled) {
         String name = StringUtils.hasText(sampler.getName()) ? sampler.getName() : sampler.getUrl();
         if (sampler.getCsvRefs() != null) {
             for (ScriptFormRequest.CsvRef csvRef : sampler.getCsvRefs()) {
                 appendCsvDataSet(jmx, csvRef, fileNames);
             }
+        }
+        // 漏斗条件：FIXED_TPS 模式 + 占比有效（0<p<100；null/100 全量执行不包裹）
+        Double percent = sampler.getTrafficPercent();
+        boolean funnel = funnelEnabled && percent != null && percent > 0 && percent < 100;
+        if (funnel) {
+            appendThroughputController(jmx, name, percent);
         }
         appendHttpSampler(jmx, name, sampler, globalConfig);
         jmx.append("      <hashTree>\n");
@@ -522,6 +536,41 @@ public class FormScriptJmxBuilder {
             }
         }
         jmx.append("      </hashTree>\n");
+        if (funnel) {
+            // 关闭 ThroughputController 子树（采样器整体作为控制器子节点）
+            jmx.append("      </hashTree>\n");
+        }
+    }
+
+    /**
+     * 追加吞吐量控制器（ThroughputController 百分比模式）：仅放行指定百分比的迭代经过其子树，
+     * 实现 FIXED_TPS 串行链路的接口级漏斗；perThread=false 全局统计（跨线程累计，比例精确到大数定律）
+     *
+     * @param jmx     JMX 输出缓冲
+     * @param name    采样器名（控制器命名 TC-{name}）
+     * @param percent 放行百分比（0<p<100）
+     */
+    private void appendThroughputController(StringBuilder jmx, String name, double percent) {
+        jmx.append("      <ThroughputController guiclass=\"ThroughputControllerGui\" testclass=\"ThroughputController\" ")
+                .append("testname=\"TC-").append(escapeAttr(name)).append("\" enabled=\"true\">\n");
+        jmx.append("        <boolProp name=\"ThroughputController.perThread\">false</boolProp>\n");
+        // style=1 百分比模式（0 为总次数模式）；属性名 percentThroughput（JMeter 5.6 TestBean 定义，
+        // 错写成 percent 会被静默忽略，退化为总次数模式导致漏斗失效）
+        jmx.append("        <intProp name=\"ThroughputController.style\">1</intProp>\n");
+        jmx.append("        <stringProp name=\"ThroughputController.percentThroughput\">").append(percent).append("</stringProp>\n");
+        jmx.append("        <stringProp name=\"ThroughputController.maxThroughput\">1</stringProp>\n");
+        jmx.append("      </ThroughputController>\n");
+        jmx.append("      <hashTree>\n");
+    }
+
+    /**
+     * 判断压测模式是否为 FIXED_TPS（接口级漏斗仅在该模式渲染；CONCURRENT/STEPPED 保持单元整体占比）
+     *
+     * @param mode 压测模式
+     * @return true 表示 FIXED_TPS
+     */
+    private static boolean fixedTpsMode(String mode) {
+        return "FIXED_TPS".equalsIgnoreCase(mode);
     }
 
     /**

@@ -4,6 +4,7 @@
   - 有 taskId 时：KPI 行（当前 TPS / 平均 RT / P95 / 错误率 / 活跃线程，附总请求数）
     + 2×2 四张 ECharts 曲线（TPS+错误数副轴、RT avg/p95/p99、错误率%、活跃线程），共用同一时间轴（HH:mm:ss）
   - 每 3 秒轮询 metrics；detail 接口检测到任务 FINISHED/FAILED 时停止轮询并提示"任务已结束，数据为最终态"
+  - 头部操作：运行中显示「停止任务」（二次确认后下发停止指令）；已完成显示「查看报告」直达压测报告页
   - 页面离开清除定时器与 resize 监听并销毁图表实例；echarts 按需引入，容器随窗口自适应
 -->
 <template>
@@ -54,7 +55,22 @@
             <el-tag v-if="finished" type="info" effect="plain" size="small">数据为最终态</el-tag>
             <el-tag v-else type="success" effect="plain" size="small">实时刷新中（3s）</el-tag>
           </div>
-          <el-button :icon="SwitchButton" @click="switchTask">切换任务</el-button>
+          <div class="head-actions">
+            <!-- 运行中：提供停止入口（二次确认后下发停止指令） -->
+            <el-button
+              v-if="canStop"
+              type="danger"
+              :loading="stopping"
+              @click="handleStop"
+            >停止任务</el-button>
+            <!-- 已完成：直达压测报告 -->
+            <el-button
+              v-if="canReport"
+              type="primary"
+              @click="goReport"
+            >查看报告</el-button>
+            <el-button :icon="SwitchButton" @click="switchTask">切换任务</el-button>
+          </div>
         </div>
       </div>
 
@@ -104,12 +120,12 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { SwitchButton } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { page as pageTasks, detail as taskDetail } from '@/api/task'
+import { page as pageTasks, detail as taskDetail, stopTask } from '@/api/task'
 import { getTaskMetrics } from '@/api/metric'
 import { formatClock } from '@/utils/format'
 import {
@@ -200,6 +216,44 @@ const metrics = reactive({ series: [], samplers: [], total: null })
 
 /** 任务是否已到终态（FINISHED/FAILED） */
 const finished = ref(false)
+
+/** 停止指令下发中（按钮 loading 用） */
+const stopping = ref(false)
+
+/** 可停止：任务运行中（准备中/停止中不可重复操作） */
+const canStop = computed(() => task.value?.status === 'RUNNING')
+
+/** 可查看报告：任务已完成（报告随任务收尾生成） */
+const canReport = computed(() => task.value?.status === 'FINISHED')
+
+/**
+ * 停止任务：二次确认后下发停止指令，本地先置为 STOPPING 防重复点击，随后立即刷新详情
+ */
+async function handleStop() {
+  try {
+    await ElMessageBox.confirm('确定停止当前任务？各节点将收尾并生成报告', '停止任务', { type: 'warning' })
+  } catch {
+    return
+  }
+  stopping.value = true
+  try {
+    await stopTask(taskId.value)
+    ElMessage.success('停止指令已下发')
+    task.value = { ...task.value, status: 'STOPPING' }
+    await loadTask()
+  } catch {
+    // 错误提示已由 http.js 拦截器统一弹出
+  } finally {
+    stopping.value = false
+  }
+}
+
+/**
+ * 跳转当前任务的压测报告页（/reports/:id 以任务 ID 关联）
+ */
+function goReport() {
+  router.push(`/reports/${taskId.value}`)
+}
 
 /** 轮询定时器句柄与连续失败计数 */
 let pollTimer = null
@@ -628,6 +682,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/* 头部操作按钮组（运行中显示停止任务 / 已完成显示查看报告） */
+.head-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .head-info {

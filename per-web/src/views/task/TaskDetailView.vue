@@ -133,22 +133,40 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <!-- ③ 流量占比（多执行单元任务的占比分配，独立分块对齐创建向导的占比配置区） -->
+          <!-- ③ 流量占比（串行组单元下内嵌接口漏斗子行，树形默认全展开可折叠，同创建页层级结构） -->
           <template v-if="weightRows.length">
             <div class="section-title">流量占比</div>
-            <el-table :data="weightRows" size="small" class="dispatch-table">
+            <el-table
+              :data="weightRows"
+              size="small"
+              class="dispatch-table"
+              row-key="id"
+              default-expand-all
+              :tree-props="{ children: 'children' }"
+            >
               <el-table-column prop="index" label="#" width="50" align="center" />
               <el-table-column prop="name" label="执行单元" min-width="220" show-overflow-tooltip />
               <el-table-column prop="type" label="类型" width="110" align="center">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.type === '并行接口' ? 'danger' : 'info'" effect="plain">
+                  <el-tag
+                    v-if="row.type !== '接口占比'"
+                    size="small"
+                    :type="row.type === '并行接口' ? 'danger' : 'info'"
+                    effect="plain"
+                  >
                     {{ row.type }}
                   </el-tag>
+                  <span v-else class="funnel-child-type">接口</span>
                 </template>
               </el-table-column>
-              <el-table-column label="占比" width="180" align="center">
+              <el-table-column label="占比" width="200" align="center">
                 <template #default="{ row }">
-                  <span class="weight-num">{{ row.weight }}%</span>
+                  <span v-if="row.type !== '接口占比'" class="weight-num">{{ row.weight }}%</span>
+                  <span v-else>
+                    {{ row.weight }}%
+                    <span v-if="row.overridden" class="funnel-default">（脚本 {{ row.defaultPercent }}%）</span>
+                    <span v-else class="funnel-default">（同脚本）</span>
+                  </span>
                 </template>
               </el-table-column>
             </el-table>
@@ -369,27 +387,62 @@ const execUnits = computed(() => {
         units.push({ name: `${g.name || '接口组'}-${s.name || s.url}`, type: '并行接口' })
       })
     } else {
-      units.push({ name: g.name || `分组${units.length + 1}`, type: '串行组' })
+      // 串行组单元携带组内接口列表（流量占比表内嵌接口漏斗子行用；
+      // key 规则与后端 overrideFunnelPercents 一致）
+      const groupLabel = (g.name || '').trim() || '接口组'
+      const funnelRows = (g.samplers || []).map((s) => {
+        const samplerName = (s.name || '').trim() || s.url || ''
+        return {
+          key: `${groupLabel}/${samplerName}`,
+          name: samplerName,
+          defaultPercent: s.trafficPercent ?? 100
+        }
+      })
+      units.push({ name: g.name || `分组${units.length + 1}`, type: '串行组', funnelRows })
     }
   })
   return units
 })
 
 /**
- * 流量占比展示行：weights 与执行单元顺序对齐（单元缺失时按序号占位），
- * 并按占比降序展示分配百分比
+ * 流量占比树：单元行为主行，串行组单元下内嵌接口漏斗子行（children，el-table 树形默认全展开）；
+ * weights 与执行单元顺序对齐；单单元无 weights 但配置了漏斗时也展示（单元占比 100%）
  */
 const weightRows = computed(() => {
-  const weights = task.value?.config?.weights
-  if (!Array.isArray(weights) || weights.length < 2) {
+  const config = task.value?.config || {}
+  const weights = config.weights
+  const funnel = task.value?.mode === 'FIXED_TPS' ? (config.funnelPercents || {}) : {}
+  const hasWeights = Array.isArray(weights) && weights.length >= 2
+  if (!hasWeights && !Object.keys(funnel).length) {
     return []
   }
-  return weights.map((w, i) => ({
-    index: i + 1,
-    name: execUnits.value[i]?.name || `执行单元 ${i + 1}`,
-    type: execUnits.value[i]?.type || '-',
-    weight: w
-  }))
+  const base = hasWeights
+    ? weights.map((w, i) => ({ w, unit: execUnits.value[i] }))
+    : [{ w: 100, unit: execUnits.value[0] }]
+  return base.map((item, i) => {
+    const row = {
+      id: `unit-${i}`,
+      index: i + 1,
+      name: item.unit?.name || `执行单元 ${i + 1}`,
+      type: item.unit?.type || '-',
+      weight: item.w,
+      children: []
+    }
+    ;(item.unit?.funnelRows || []).forEach((s) => {
+      const percent = funnel[s.key]
+      if (percent != null) {
+        row.children.push({
+          id: `funnel-${i}-${s.key}`,
+          name: s.name,
+          type: '接口占比',
+          weight: Number(percent),
+          defaultPercent: s.defaultPercent,
+          overridden: Number(percent) !== Number(s.defaultPercent)
+        })
+      }
+    })
+    return row
+  })
 })
 
 /** 参测节点展示列表：从节点执行明细去重提取「主机名(IP)」，节点已删除时回退 nodeKey 缩略 */
@@ -697,5 +750,14 @@ onUnmounted(stopPolling)
 .weight-num {
   font-weight: 600;
   color: var(--pp-primary);
+}
+/* 流量占比树内嵌的接口漏斗子行 */
+.funnel-child-type {
+  font-size: 12px;
+  color: var(--pp-text-secondary);
+}
+.funnel-default {
+  font-size: 12px;
+  color: var(--pp-text-secondary);
 }
 </style>

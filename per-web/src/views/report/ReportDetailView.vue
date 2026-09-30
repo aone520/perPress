@@ -283,10 +283,27 @@ let errChart = null
 /** 报告摘要（无数据时给空对象兜底） */
 const summary = computed(() => report.value?.summary || {})
 
-/** 时间序列 / 事务明细 / 节点明细 */
+/** 时间序列 / 事务明细 / 节点明细（samplers 补算错误率，后端分区未携带时由 errorCount/count 计算） */
 const series = computed(() => report.value?.series || [])
-const samplers = computed(() => report.value?.samplers || [])
+const samplers = computed(() => withErrorRate(report.value?.samplers || []))
 const nodes = computed(() => report.value?.nodes || [])
+
+/**
+ * 为统计行补算错误率（%）：后端未返回 errorRate 时由 errorCount/count 计算，
+ * 使事务明细的错误率列展示与排序可用（无样本返回 null，展示为 -）
+ *
+ * @param {Array<Object>} rows 统计行列表（含 count/errorCount）
+ * @returns {Array<Object>} 补充 errorRate 后的行列表
+ */
+function withErrorRate(rows) {
+  return rows.map((row) => {
+    if (row?.errorRate !== null && row?.errorRate !== undefined && row?.errorRate !== '') {
+      return row
+    }
+    const count = Number(row?.count) || 0
+    return { ...row, errorRate: count ? ((Number(row?.errorCount) || 0) * 100) / count : null }
+  })
+}
 
 /** 错误分析数据（byCode / topSamplers / samples / timeline） */
 const errors = computed(() => report.value?.errors || { byCode: [], topSamplers: [], samples: [], timeline: [] })

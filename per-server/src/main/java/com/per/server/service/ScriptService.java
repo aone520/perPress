@@ -296,11 +296,12 @@ public class ScriptService {
 
     /**
      * 按压测模式重渲染表单脚本 JMX（任务创建时生成模式化快照用）：
-     * 仅 FORM 类型脚本支持；读取脚本当前表单定义并按模式渲染线程组/定时器
+     * 仅 FORM 类型脚本支持；读取脚本当前表单定义并按模式渲染线程组/定时器；
+     * 任务 config 的接口漏斗占比（funnelPercents，key=组名/接口名）在此处覆盖脚本默认值
      *
      * @param scriptId 脚本ID
      * @param mode     压测模式（CONCURRENT/FIXED_TPS/STEPPED）
-     * @param config   模式参数
+     * @param config   模式参数（含可选 funnelPercents 任务级漏斗覆盖）
      * @return 按模式渲染后的 JMX 文本
      */
     public String renderModeJmx(Long scriptId, String mode, TaskCreateRequest.Config config) {
@@ -314,7 +315,39 @@ public class ScriptService {
         } catch (Exception e) {
             throw new BizException("表单定义解析失败：" + e.getMessage());
         }
+        overrideFunnelPercents(formDef, config);
         return jmxBuilder.buildWithMode(formDef, collectFileNames(formDef), mode, config);
+    }
+
+    /**
+     * 任务级漏斗覆盖：以「组名/接口名」为 key 覆盖串行组内接口的 trafficPercent（脚本值为默认，
+     * 任务值优先）；并行组不参与（其接口占比由单元权重 weights 控制）；value 非法(<=0 或 >100)时忽略
+     *
+     * @param formDef 表单场景定义（原地修改）
+     * @param config  任务模式参数（funnelPercents 为空时不动）
+     */
+    private void overrideFunnelPercents(ScriptFormRequest.FormDef formDef, TaskCreateRequest.Config config) {
+        if (config == null || config.getFunnelPercents() == null || config.getFunnelPercents().isEmpty()
+                || formDef.getGroups() == null) {
+            return;
+        }
+        for (ScriptFormRequest.Group group : formDef.getGroups()) {
+            if (group == null || "PARALLEL".equalsIgnoreCase(group.getExecution())
+                    || group.getSamplers() == null) {
+                continue;
+            }
+            String groupKey = StringUtils.hasText(group.getName()) ? group.getName().trim() : "接口组";
+            for (ScriptFormRequest.Sampler sampler : group.getSamplers()) {
+                if (sampler == null) {
+                    continue;
+                }
+                String samplerKey = StringUtils.hasText(sampler.getName()) ? sampler.getName().trim() : sampler.getUrl();
+                Double percent = config.getFunnelPercents().get(groupKey + "/" + samplerKey);
+                if (percent != null && percent > 0 && percent <= 100) {
+                    sampler.setTrafficPercent(percent);
+                }
+            }
+        }
     }
 
     /**

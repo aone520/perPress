@@ -100,6 +100,13 @@ public class ScriptFormRequest {
 
         /** 引用的 CSV 数据文件列表 */
         private List<CsvRef> csvRefs;
+
+        /**
+         * 接口流量占比（%）：模拟串行链路的业务漏斗（如登录100→查价100→下单60→支付30），
+         * 仅 FIXED_TPS 模式且 SERIAL 组内生效，渲染为 JMeter ThroughputController（百分比模式）；
+         * 为空或 100 表示全量执行（不渲染控制器，结构与旧版一致）；各接口比例独立判定
+         */
+        private Double trafficPercent;
     }
 
     /**
