@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 压测任务创建请求 DTO：脚本版本 + 模式参数 + 参测节点 + 文件分发策略
@@ -90,6 +91,12 @@ public class TaskCreateRequest {
         /** 流量占比（可选）：按执行单元顺序的整数百分比（1-100，总和=100），
          * 仅表单脚本多单元时生效；为空时按单元均分。执行单元=串行组整体/并行组内单个接口 */
         private List<Integer> weights;
+
+        /**
+         * 接口级流量漏斗（可选，仅 FIXED_TPS 生效）：key=「组名/接口名」，value=放行百分比(0,100]，
+         * 覆盖脚本内接口配置的 trafficPercent 默认值；串行组链路按比例放行迭代（登录100→下单60→支付30）
+         */
+        private Map<String, Double> funnelPercents;
 
         /** JMeter 堆内存上限（MB，可选，>=256）：为空时使用节点 Agent 本地配置（默认 2048） */
         private Integer jmeterHeapMb;

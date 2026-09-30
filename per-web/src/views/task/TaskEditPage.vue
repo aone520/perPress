@@ -304,6 +304,33 @@
         />
       </section>
 
+      <!-- ③+ 接口流量漏斗（仅 FIXED_TPS + 表单脚本串行组接口时展示） -->
+      <section v-if="funnelSamplers.length" class="edit-card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">接口流量漏斗</div>
+            <div class="card-desc">
+              串行链路内按接口百分比放行迭代（如登录100→查价100→下单60→支付30）；
+              默认取脚本配置值，可在此按任务覆盖；各接口比例独立判定
+            </div>
+          </div>
+        </div>
+        <div class="weights-list">
+          <div v-for="row in funnelSamplers" :key="row.key" class="weights-row">
+            <span class="weights-name" :title="row.key">{{ row.group }} / {{ row.name }}</span>
+            <el-input-number
+              v-model="form.funnelPercents[row.key]"
+              :min="1"
+              :max="100"
+              :step="5"
+              size="small"
+            />
+            <span class="unit-text">%</span>
+            <span class="weights-alloc">脚本默认 {{ row.defaultPercent }}%</span>
+          </div>
+        </div>
+      </section>
+
       <!-- ④ 选择压测节点 -->
       <section class="edit-card">
         <div class="card-head">
@@ -414,7 +441,7 @@ const ALL_MODE_DEFAULTS = {
   ...MODE_DEFAULT_CONFIG.STEPPED
 }
 
-/** config 中可能出现的全部字段名（编辑任务时用于回填，weights 为执行单元占比数组） */
+/** config 中可能出现的全部字段名（编辑任务时用于回填，weights 为执行单元占比数组，funnelPercents 为接口漏斗占比） */
 const CONFIG_FIELDS = [
   'threads',
   'rampupSeconds',
@@ -428,6 +455,7 @@ const CONFIG_FIELDS = [
   'peak',
   'peakSeconds',
   'weights',
+  'funnelPercents',
   'jmeterHeapMb'
 ]
 
@@ -442,6 +470,7 @@ const form = reactive({
   scheduledStartTime: null,
   dispatchModes: {},
   weights: [],
+  funnelPercents: {},
   jmeterHeapMb: null,
   scriptLoading: false,
   versionLoading: false,
@@ -520,6 +549,47 @@ const execUnits = computed(() => {
 
 /** 是否显示流量占比配置：执行单元数 ≥ 2（单单元无拆分意义，与后端校验口径一致） */
 const showWeights = computed(() => execUnits.value.length >= 2)
+
+/**
+ * 串行组接口列表（接口级流量漏斗配置项）：仅 FIXED_TPS 模式展示，
+ * key=「组名/接口名」（与后端 overrideFunnelPercents 匹配规则一致），
+ * defaultPercent 取脚本内配置的 trafficPercent（任务值缺省时兜底）
+ */
+const funnelSamplers = computed(() => {
+  if (form.mode !== 'FIXED_TPS' || selectedScript.value?.type !== 'FORM' || !scriptFormDef.value) {
+    return []
+  }
+  const def = scriptFormDef.value
+  const groups = Array.isArray(def.groups) && def.groups.length
+    ? def.groups
+    : (def.samplers?.length ? [{ name: def.threadGroupName || '', execution: 'SERIAL', samplers: def.samplers }] : [])
+  const rows = []
+  groups.forEach((group) => {
+    if (group.execution === 'PARALLEL') {
+      return
+    }
+    const groupLabel = (group.name || '').trim() || '接口组'
+    ;(group.samplers || []).forEach((sampler) => {
+      const samplerName = (sampler.name || '').trim() || sampler.url || ''
+      rows.push({
+        key: `${groupLabel}/${samplerName}`,
+        group: groupLabel,
+        name: samplerName,
+        defaultPercent: sampler.trafficPercent ?? 100
+      })
+    })
+  })
+  return rows
+})
+
+/** 漏斗配置项变化时补齐缺失默认值（编辑回填已存在的值不覆盖；切换脚本后旧 key 在提交时过滤） */
+watch(funnelSamplers, (rows) => {
+  rows.forEach((row) => {
+    if (form.funnelPercents[row.key] == null) {
+      form.funnelPercents[row.key] = row.defaultPercent
+    }
+  })
+}, { immediate: true })
 
 /** 占比总和（未填项按 0 计） */
 const weightsTotal = computed(() =>
@@ -924,6 +994,17 @@ function buildModeConfig() {
     // 线程上限可选：留空时不提交，由服务端按默认规则推导
     if (form.maxThreads) {
       config.maxThreads = form.maxThreads
+    }
+    // 接口流量漏斗：按当前脚本串行组接口 key 采集有效值（切换脚本后的残留 key 过滤掉）
+    const funnel = {}
+    funnelSamplers.value.forEach((row) => {
+      const percent = form.funnelPercents[row.key]
+      if (percent != null && percent > 0 && percent <= 100) {
+        funnel[row.key] = Number(percent)
+      }
+    })
+    if (Object.keys(funnel).length) {
+      config.funnelPercents = funnel
     }
     return config
   }
