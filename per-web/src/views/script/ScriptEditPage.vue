@@ -266,6 +266,29 @@
                     </el-col>
                   </el-row>
 
+                  <!-- 接口流量占比（串行链路漏斗）：仅串行组展示，仅固定 TPS 压测模式生效 -->
+                  <el-row v-if="group.execution !== 'PARALLEL'" :gutter="12">
+                    <el-col :span="24">
+                      <el-form-item label="流量占比" class="funnel-item">
+                        <el-input-number
+                          v-model="sampler.trafficPercent"
+                          :min="1"
+                          :max="100"
+                          :step="5"
+                          controls-position="right"
+                          class="w-140"
+                        />
+                        <span class="funnel-unit">%</span>
+                        <el-tooltip
+                          content="仅固定 TPS 模式生效：按百分比放行迭代，形成串行链路漏斗（如登录100→查价100→下单60→支付30）；其他压测模式忽略该项"
+                          placement="top"
+                        >
+                          <el-icon class="sub-help"><QuestionFilled /></el-icon>
+                        </el-tooltip>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
                   <!-- 请求头 -->
                   <div class="sub-title">
                     请求头
@@ -528,7 +551,11 @@ function sanitizeSampler(sampler) {
         recycle: csvRef.recycle !== false,
         shareMode: csvRef.shareMode || 'shareMode.all',
         ignoreFirstLine: csvRef.ignoreFirstLine === true
-      }))
+      })),
+    // 接口流量占比（串行链路漏斗）：仅在有效区间(0,100)时提交，100/空 不传（后端不渲染控制器）
+    trafficPercent: sampler.trafficPercent != null && sampler.trafficPercent > 0 && sampler.trafficPercent < 100
+      ? Number(sampler.trafficPercent)
+      : null
   }
 }
 
@@ -741,7 +768,8 @@ function createEmptySampler() {
     body: '',
     assertions: [],
     extractors: [],
-    csvRefs: []
+    csvRefs: [],
+    trafficPercent: 100
   }
 }
 
@@ -778,7 +806,8 @@ function normalizeSampler(sampler = {}) {
       expect: assertion.expect || ''
     })),
     extractors: (sampler.extractors || []).map((ex) => ({ ...createEmptyExtractor(), ...ex })),
-    csvRefs: (sampler.csvRefs || []).map((ref) => ({ ...createEmptyCsvRef(), ...ref }))
+    csvRefs: (sampler.csvRefs || []).map((ref) => ({ ...createEmptyCsvRef(), ...ref })),
+    trafficPercent: sampler.trafficPercent == null ? 100 : Number(sampler.trafficPercent)
   }
 }
 
@@ -1537,6 +1566,17 @@ onBeforeUnmount(() => {
   color: var(--pp-text-placeholder);
   cursor: help;
   margin-right: 6px;
+}
+.funnel-item {
+  margin-bottom: 12px;
+}
+.funnel-item :deep(.el-input-number) {
+  width: 140px;
+}
+.funnel-unit {
+  margin: 0 8px 0 6px;
+  font-size: 13px;
+  color: var(--pp-text-placeholder);
 }
 .sub-title .el-button {
   margin-left: auto;
