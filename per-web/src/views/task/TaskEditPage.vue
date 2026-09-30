@@ -245,34 +245,59 @@
         </el-form>
       </section>
 
-      <!-- ③ 流量占比（多执行单元时展示） -->
+      <!-- ③ 流量占比（多执行单元时展示；串行组单元内嵌组内接口的流量漏斗，默认展开可折叠） -->
       <section v-if="showWeights" class="edit-card">
         <div class="card-head">
           <div class="head-left">
             <div>
               <div class="card-title">流量占比</div>
-              <div class="card-desc">按执行单元分配总压力，各单元占比之和必须等于 100%</div>
+              <div class="card-desc">
+                按执行单元分配总压力，各单元占比之和必须等于 100%；
+                <template v-if="form.mode === 'FIXED_TPS'">串行组可展开设置组内接口漏斗占比（如登录100→下单60→支付30），默认取脚本值可覆盖</template>
+              </div>
             </div>
             <el-button size="small" @click="distributeEvenly">均分</el-button>
           </div>
         </div>
         <div class="weights-list">
-          <div
-            v-for="(unit, ui) in execUnits"
-            :key="`${unit.name}-${ui}`"
-            class="weights-row"
-          >
-            <span class="weights-name" :title="unit.name">{{ ui + 1 }}. {{ unit.name }}</span>
-            <el-input-number
-              v-model="form.weights[ui]"
-              :min="1"
-              :max="100"
-              :step="5"
-              size="small"
-            />
-            <span class="unit-text">%</span>
-            <span class="weights-alloc">{{ weightAllocTexts[ui] }}</span>
-          </div>
+          <template v-for="(unit, ui) in execUnits" :key="`${unit.name}-${ui}`">
+            <div class="weights-row" :class="{ 'unit-expandable': form.mode === 'FIXED_TPS' && unit.funnelRows?.length }">
+              <el-icon
+                v-if="form.mode === 'FIXED_TPS' && unit.funnelRows?.length"
+                class="unit-arrow"
+                :class="{ collapsed: !expandedUnits.has(ui) }"
+                @click="toggleUnit(ui)"
+              >
+                <CaretBottom />
+              </el-icon>
+              <span v-else class="unit-arrow-spacer"></span>
+              <span class="weights-name" :title="unit.name">{{ ui + 1 }}. {{ unit.name }}</span>
+              <el-input-number
+                v-model="form.weights[ui]"
+                :min="1"
+                :max="100"
+                :step="5"
+                size="small"
+              />
+              <span class="unit-text">%</span>
+              <span class="weights-alloc">{{ weightAllocTexts[ui] }}</span>
+            </div>
+            <!-- 串行组内接口的流量漏斗子行（层级内嵌，不单独成卡） -->
+            <div v-if="form.mode === 'FIXED_TPS' && unit.funnelRows?.length && expandedUnits.has(ui)" class="funnel-rows">
+              <div v-for="row in unit.funnelRows" :key="row.key" class="weights-row funnel-row">
+                <span class="weights-name" :title="row.key">{{ row.name }}</span>
+                <el-input-number
+                  v-model="form.funnelPercents[row.key]"
+                  :min="1"
+                  :max="100"
+                  :step="5"
+                  size="small"
+                />
+                <span class="unit-text">%</span>
+                <span class="weights-alloc">脚本默认 {{ row.defaultPercent }}%</span>
+              </div>
+            </div>
+          </template>
         </div>
         <el-alert
           :type="weightsReady ? 'success' : 'error'"
@@ -302,33 +327,6 @@
           :title="steppedUnitsHint"
           class="mode-alert"
         />
-      </section>
-
-      <!-- ③+ 接口流量漏斗（仅 FIXED_TPS + 表单脚本串行组接口时展示） -->
-      <section v-if="funnelSamplers.length" class="edit-card">
-        <div class="card-head">
-          <div>
-            <div class="card-title">接口流量漏斗</div>
-            <div class="card-desc">
-              串行链路内按接口百分比放行迭代（如登录100→查价100→下单60→支付30）；
-              默认取脚本配置值，可在此按任务覆盖；各接口比例独立判定
-            </div>
-          </div>
-        </div>
-        <div class="weights-list">
-          <div v-for="row in funnelSamplers" :key="row.key" class="weights-row">
-            <span class="weights-name" :title="row.key">{{ row.group }} / {{ row.name }}</span>
-            <el-input-number
-              v-model="form.funnelPercents[row.key]"
-              :min="1"
-              :max="100"
-              :step="5"
-              size="small"
-            />
-            <span class="unit-text">%</span>
-            <span class="weights-alloc">脚本默认 {{ row.defaultPercent }}%</span>
-          </div>
-        </div>
       </section>
 
       <!-- ④ 选择压测节点 -->
@@ -411,7 +409,7 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Check } from '@element-plus/icons-vue'
+import { ArrowLeft, CaretBottom, Check } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { create as createTask, updateTask, detail as taskDetail } from '@/api/task'
 import { page as pageScripts, detail as scriptDetail } from '@/api/script'
@@ -541,7 +539,17 @@ const execUnits = computed(() => {
         units.push({ name: `${groupLabel}-${samplerName}` })
       })
     } else {
-      units.push({ name: groupLabel })
+      // 串行组单元携带组内接口列表（流量漏斗内嵌展示用；key 与后端 overrideFunnelPercents 匹配规则一致）
+      const funnelRows = (group.samplers || []).map((sampler) => {
+        const samplerName = (sampler.name || '').trim() || sampler.url || ''
+        return {
+          key: `${groupLabel}/${samplerName}`,
+          group: groupLabel,
+          name: samplerName,
+          defaultPercent: sampler.trafficPercent ?? 100
+        }
+      })
+      units.push({ name: groupLabel, funnelRows })
     }
   })
   return units
@@ -551,35 +559,14 @@ const execUnits = computed(() => {
 const showWeights = computed(() => execUnits.value.length >= 2)
 
 /**
- * 串行组接口列表（接口级流量漏斗配置项）：仅 FIXED_TPS 模式展示，
- * key=「组名/接口名」（与后端 overrideFunnelPercents 匹配规则一致），
- * defaultPercent 取脚本内配置的 trafficPercent（任务值缺省时兜底）
+ * 串行组接口列表（接口级流量漏斗配置项，从执行单元派生）：
+ * 仅 FIXED_TPS 模式生效，key=「组名/接口名」（与后端 overrideFunnelPercents 匹配规则一致）
  */
 const funnelSamplers = computed(() => {
-  if (form.mode !== 'FIXED_TPS' || selectedScript.value?.type !== 'FORM' || !scriptFormDef.value) {
+  if (form.mode !== 'FIXED_TPS') {
     return []
   }
-  const def = scriptFormDef.value
-  const groups = Array.isArray(def.groups) && def.groups.length
-    ? def.groups
-    : (def.samplers?.length ? [{ name: def.threadGroupName || '', execution: 'SERIAL', samplers: def.samplers }] : [])
-  const rows = []
-  groups.forEach((group) => {
-    if (group.execution === 'PARALLEL') {
-      return
-    }
-    const groupLabel = (group.name || '').trim() || '接口组'
-    ;(group.samplers || []).forEach((sampler) => {
-      const samplerName = (sampler.name || '').trim() || sampler.url || ''
-      rows.push({
-        key: `${groupLabel}/${samplerName}`,
-        group: groupLabel,
-        name: samplerName,
-        defaultPercent: sampler.trafficPercent ?? 100
-      })
-    })
-  })
-  return rows
+  return execUnits.value.flatMap((unit) => unit.funnelRows || [])
 })
 
 /** 漏斗配置项变化时补齐缺失默认值（编辑回填已存在的值不覆盖；切换脚本后旧 key 在提交时过滤） */
@@ -590,6 +577,34 @@ watch(funnelSamplers, (rows) => {
     }
   })
 }, { immediate: true })
+
+/** 已展开的串行组单元下标（默认全部展开，可逐个折叠） */
+const expandedUnits = ref(new Set())
+
+/** 执行单元变化时重置展开状态：带接口的单元默认全展开 */
+watch(execUnits, (units) => {
+  const next = new Set()
+  units.forEach((unit, ui) => {
+    if (unit.funnelRows?.length) {
+      next.add(ui)
+    }
+  })
+  expandedUnits.value = next
+})
+
+/**
+ * 切换单元展开/折叠状态
+ * @param {number} ui 单元下标
+ */
+function toggleUnit(ui) {
+  const next = new Set(expandedUnits.value)
+  if (next.has(ui)) {
+    next.delete(ui)
+  } else {
+    next.add(ui)
+  }
+  expandedUnits.value = next
+}
 
 /** 占比总和（未填项按 0 计） */
 const weightsTotal = computed(() =>
@@ -1286,6 +1301,35 @@ onMounted(async () => {
   flex-shrink: 0;
   font-size: 12px;
   color: var(--pp-text-secondary);
+}
+
+/* 串行组单元展开箭头与接口漏斗子行 */
+.unit-arrow {
+  flex-shrink: 0;
+  width: 18px;
+  font-size: 14px;
+  color: var(--pp-text-secondary);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.unit-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+.unit-arrow-spacer {
+  flex-shrink: 0;
+  width: 18px;
+}
+.unit-expandable .weights-name {
+  font-weight: 600;
+}
+.funnel-rows {
+  padding-left: 26px;
+  border-left: 2px solid var(--pp-border);
+  margin: 2px 0 6px 9px;
+}
+.funnel-row .weights-name {
+  font-size: 12.5px;
+  color: var(--pp-text-regular);
 }
 
 /* 参数文件分发行 */
