@@ -243,6 +243,15 @@
             <span class="unit-text">MB（可选，留空使用节点默认 2048；大压力场景建议调高）</span>
           </el-form-item>
         </el-form>
+        <!-- 脚本配置了接口漏斗但当前模式非固定TPS：明确提示将被忽略，避免误解为已生效 -->
+        <el-alert
+          v-if="form.mode !== 'FIXED_TPS' && scriptFunnelCount"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="mode-alert"
+          :title="`脚本内 ${scriptFunnelCount} 个串行组接口配置了流量占比，该配置仅在固定TPS模式下生效，当前模式压测将忽略`"
+        />
       </section>
 
       <!-- ③ 流量占比（多执行单元时展示；串行组单元内嵌组内接口的流量漏斗，默认展开可折叠） -->
@@ -568,6 +577,14 @@ const funnelSamplers = computed(() => {
   }
   return execUnits.value.flatMap((unit) => unit.funnelRows || [])
 })
+
+/** 脚本内配置了漏斗占比（<100）的串行组接口数：非 FIXED_TPS 模式时提示将被忽略 */
+const scriptFunnelCount = computed(() =>
+  execUnits.value.reduce(
+    (count, unit) => count + (unit.funnelRows || []).filter((row) => row.defaultPercent < 100).length,
+    0
+  )
+)
 
 /** 漏斗配置项变化时补齐缺失默认值（编辑回填已存在的值不覆盖；切换脚本后旧 key 在提交时过滤） */
 watch(funnelSamplers, (rows) => {

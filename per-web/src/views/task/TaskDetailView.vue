@@ -154,6 +154,27 @@
             </el-table>
           </template>
 
+          <!-- ③+ 接口流量漏斗（FIXED_TPS 任务配置了接口占比时展示，压测后可对照实际比例） -->
+          <template v-if="funnelRows.length">
+            <div class="section-title">接口流量漏斗</div>
+            <el-table :data="funnelRows" size="small" class="dispatch-table">
+              <el-table-column prop="group" label="串行组" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="name" label="接口" min-width="180" show-overflow-tooltip />
+              <el-table-column label="任务占比" width="110" align="center">
+                <template #default="{ row }">
+                  <span class="weight-num">{{ row.percent }}%</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="脚本默认" width="170" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.stale" size="small" type="warning" effect="plain">脚本中已不存在</el-tag>
+                  <span v-else-if="row.overridden">{{ row.defaultPercent }}%（已覆盖）</span>
+                  <span v-else>同脚本 {{ row.defaultPercent }}%</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+
           <!-- ④ 参测节点（对齐创建向导步骤2的节点选择） -->
           <div class="section-title">参测节点（{{ participantNodes.length }}）</div>
           <template v-if="participantNodes.length">
@@ -390,6 +411,48 @@ const weightRows = computed(() => {
     type: execUnits.value[i]?.type || '-',
     weight: w
   }))
+})
+
+/**
+ * 接口流量漏斗展示行：任务 config.funnelPercents（key=组名/接口名）对照脚本默认值，
+ * 标注是否覆盖；脚本已改动导致 key 失配时标记"脚本中已不存在"（提示任务快照基于旧脚本结构）
+ */
+const funnelRows = computed(() => {
+  const funnel = task.value?.config?.funnelPercents
+  if (task.value?.mode !== 'FIXED_TPS' || !funnel) {
+    return []
+  }
+  // 脚本串行组接口默认占比映射（key 规则与后端 overrideFunnelPercents 一致）
+  const defaults = {}
+  const def = scriptData.value?.formDef
+  if (def) {
+    const groups = (def.groups && def.groups.length)
+      ? def.groups
+      : [{ name: def.threadGroupName || '接口组', execution: 'SERIAL', samplers: def.samplers || [] }]
+    groups.forEach((g) => {
+      if (g.execution === 'PARALLEL') {
+        return
+      }
+      const groupLabel = (g.name || '').trim() || '接口组'
+      ;(g.samplers || []).forEach((s) => {
+        const samplerName = (s.name || '').trim() || s.url || ''
+        defaults[`${groupLabel}/${samplerName}`] = s.trafficPercent ?? 100
+      })
+    })
+  }
+  return Object.entries(funnel).map(([key, percent]) => {
+    const idx = key.indexOf('/')
+    const hasDefault = key in defaults
+    return {
+      key,
+      group: idx > 0 ? key.slice(0, idx) : '-',
+      name: idx > 0 ? key.slice(idx + 1) : key,
+      percent,
+      defaultPercent: hasDefault ? defaults[key] : null,
+      overridden: hasDefault && Number(defaults[key]) !== Number(percent),
+      stale: !hasDefault
+    }
+  })
 })
 
 /** 参测节点展示列表：从节点执行明细去重提取「主机名(IP)」，节点已删除时回退 nodeKey 缩略 */
