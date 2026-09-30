@@ -1,0 +1,130 @@
+# =====================================================================
+# PerPress 本机一键体验 compose：MySQL + Server + Nginx(前端) + 演示被测服务 + 3 台 Agent 压力机
+#
+# 一键部署：在项目根目录执行
+#   bash deploy/deploy-local.sh
+# （脚本会编译 jar、打包 JMeter 引擎 zip、拷贝前端 dist 后启动本 compose）
+#
+# 启动后访问：
+#   平台页面：  http://localhost        （admin / admin123）
+#   API 直连：  http://localhost:8180   （备用，Nginx 之外的直连入口）
+#   被测服务：  http://localhost:9090/api/hello
+#   3 台节点：  per-agent-1 / per-agent-2 / per-agent-3（启动后自动注册并部署 JMeter 引擎）
+#
+# 与开发环境端口隔离：Nginx=80、Server=8180、被测=9090、MySQL 不对宿主机暴露
+# （本机 8080/3306/5173 留给开发环境的 per-server / mysql-container / vite 使用）
+# =====================================================================
+services:
+  per-mysql:
+    image: mysql:8.0
+    container_name: per-local-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-perpress@2026}
+      MYSQL_DATABASE: per_press
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    volumes:
+      - per-local-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-perpress@2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [per-local-net]
+
+  per-server:
+    image: per-server:latest
+    container_name: per-local-server
+    restart: always
+    depends_on:
+      per-mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      # 数据源指向 compose 内 MySQL
+      SPRING_DATASOURCE_URL: jdbc:mysql://per-mysql:3306/per_press?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-perpress@2026}
+      # 文件存储目录（挂载卷持久化：脚本/参数文件/引擎包/分片）
+      PER_STORAGE_DIR: /data
+      # 平台基础地址：Agent 容器经 compose 网络访问 server（引擎/脚本下载地址都基于它）
+      PER_SERVER_BASE_URL: http://per-server:8080
+      # 指定初始注册 token：与下方 3 台 Agent 共用同一预知值（首次初始化时写入）
+      PER_REGISTER_DEFAULT_TOKEN: ${PER_REGISTER_TOKEN:-perpress-local-token}
+      # 启动引导引擎包：自动注册为当前引擎，Agent 注册后自动下载部署 JMeter
+      PER_ENGINE_BOOTSTRAP_FILE: /engine/engine.zip
+      PER_JWT_SECRET: ${PER_JWT_SECRET:-perpress-secret-key-please-change-in-production-0123456789}
+    volumes:
+      - per-local-server-data:/data
+      - ./engine.zip:/engine/engine.zip:ro
+    ports:
+      # 备用直连入口（浏览器主入口走 Nginx 80）
+      - "${PER_SERVER_PORT:-8180}:8080"
+    networks: [per-local-net]
+
+  per-nginx:
+    image: nginx:alpine
+    container_name: per-local-nginx
+    restart: always
+    depends_on: [per-server]
+    ports:
+      - "${PER_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./dist:/usr/share/nginx/html:ro
+    networks: [per-local-net]
+
+  # 演示被测服务：零依赖 Node 接口（hello/query/order/slow/error），供快速压测验证
+  per-target:
+    image: node:20-alpine
+    container_name: per-local-target
+    restart: always
+    working_dir: /app
+    volumes:
+      - ../scripts/demo-target-server.js:/app/demo-target-server.js:ro
+    command: ["node", "demo-target-server.js", "9090"]
+    ports:
+      - "${PER_TARGET_PORT:-9090}:9090"
+    networks: [per-local-net]
+
+  # ============ 3 台 Agent 压力机（共用镜像与 token，各自独立数据卷/主机名） ============
+  per-agent-1: &agent-base
+    image: per-agent:latest
+    container_name: per-local-agent-1
+    hostname: per-agent-1
+    restart: always
+    depends_on: [per-server]
+    environment:
+      TZ: Asia/Shanghai
+      PER_AGENT_SERVER_URL: http://per-server:8080
+      PER_AGENT_REGISTER_TOKEN: ${PER_REGISTER_TOKEN:-perpress-local-token}
+      # 容器内 JMeter 堆默认（任务可按任务覆盖）
+      PER_AGENT_JMETER_HEAP_MB: "1024"
+    volumes:
+      - per-local-agent1-data:/data
+    networks: [per-local-net]
+
+  per-agent-2:
+    <<: *agent-base
+    container_name: per-local-agent-2
+    hostname: per-agent-2
+    volumes:
+      - per-local-agent2-data:/data
+
+  per-agent-3:
+    <<: *agent-base
+    container_name: per-local-agent-3
+    hostname: per-agent-3
+    volumes:
+      - per-local-agent3-data:/data
+
+volumes:
+  per-local-mysql-data:
+  per-local-server-data:
+  per-local-agent1-data:
+  per-local-agent2-data:
+  per-local-agent3-data:
+
+networks:
+  per-local-net:

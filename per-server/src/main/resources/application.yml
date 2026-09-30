@@ -1,0 +1,47 @@
+# PerPress 压测平台管理服务端配置
+server:
+  port: 8080
+
+spring:
+  application:
+    name: per-server
+  servlet:
+    multipart:
+      # M2 文件库/引擎包上传大小限制（引擎 zip 较大）
+      max-file-size: 512MB
+      max-request-size: 512MB
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/per_press?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: chaojimima
+  sql:
+    init:
+      # 每次启动都执行 schema.sql（建表语句幂等，带 IF NOT EXISTS）
+      mode: always
+      schema-locations: classpath:schema.sql
+
+mybatis-plus:
+  configuration:
+    # 下划线列名自动映射驼峰属性
+    map-underscore-to-camel-case: true
+
+# 平台自定义配置
+per:
+  jwt:
+    secret: perpress-secret-key-please-change-in-production-0123456789
+    expire-hours: 24
+  server:
+    base-url: http://192.168.110.112:8080
+  storage:
+    # M2 本地文件存储根目录（数据文件与引擎包按 md5 存于 {dir}/files/，
+    # Agent 分发包位于 {dir}/agent-dist/per-agent-dist.tar.gz）
+    dir: ./server-data
+  engine:
+    # 启动引导引擎包：engine_package 表为空且该 zip 存在时自动注册为当前引擎包（版本号=文件名去扩展名）；
+    # 默认空（不引导），可通过环境变量 PER_ENGINE_BOOTSTRAP 指定
+    bootstrap-file: ${PER_ENGINE_BOOTSTRAP:}
+  report:
+    # 快照过期清理保留天数：每日 03:30 删除已结束任务（FINISHED/FAILED）超过该天数的
+    # metric_snapshot 与 error_sample（test_report 固化报告不删）
+    snapshot-retention-days: 90

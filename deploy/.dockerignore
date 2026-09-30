@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+
+# Maven 构建产物（jar 已直接放在 deploy 目录）
+**/target/
+
+# Agent 运行时数据
+**/agent-data/
+
+# 前端构建中间文件
+**/node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 文档
+*.md
+docs/
+
+# 环境配置（避免打包到镜像）
+.env
+.env.*
+!.env.example
+
+# Docker 文件本身
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# 脚本
+*.sh

@@ -1,0 +1,23 @@
+# =====================================================================
+# per-agent 运行镜像：JRE17 + Agent jar
+# Agent 为非 Web 常驻进程，启动后向服务端注册并轮询任务指令；
+# JMeter 引擎在首次注册/心跳时由服务端下发并自动部署到 /data/engine。
+#
+# 环境变量（Spring Boot relaxed binding 自动映射到 per.agent.* ）：
+#   PER_AGENT_SERVER_URL       服务端地址（必填）
+#   PER_AGENT_REGISTER_TOKEN   注册令牌（必填，与服务端一致）
+#   PER_AGENT_DATA_DIR         工作目录（默认 /data）
+# =====================================================================
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+COPY per-agent.jar /app/per-agent.jar
+
+ENV TZ=Asia/Shanghai
+ENV PER_AGENT_DATA_DIR=/data
+
+RUN mkdir -p /data
+VOLUME /data
+
+# Agent 无需对外暴露端口（主动轮询服务端）
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/per-agent.jar"]

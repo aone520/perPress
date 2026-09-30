@@ -1,0 +1,12 @@
+package com.per.server.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.per.server.entity.TaskNode;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 任务节点表 Mapper：继承 MyBatis-Plus BaseMapper 获得通用 CRUD 能力
+ */
+@Mapper
+public interface TaskNodeMapper extends BaseMapper<TaskNode> {
+}

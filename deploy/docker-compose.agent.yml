@@ -1,0 +1,40 @@
+# =====================================================================
+# PerPress Agent 节点部署 compose：每台压测机运行一个 per-agent 容器
+#
+# 部署步骤：
+#   1. cp .env.example .env 并修改 PER_AGENT_SERVER_URL 和 PER_AGENT_REGISTER_TOKEN
+#   2. docker compose -f docker-compose.agent.yml up -d
+#
+# 多台压测机各自运行本 compose，Agent 启动后自动向服务端注册为独立节点。
+# JMeter 引擎在首次注册时由服务端自动下发，无需手动安装。
+# =====================================================================
+services:
+  per-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: per-agent:latest
+    container_name: per-agent
+    restart: always
+    environment:
+      TZ: Asia/Shanghai
+      # 服务端地址（必须是 Agent 容器可访问的地址，不能用 localhost）
+      PER_AGENT_SERVER_URL: ${PER_AGENT_SERVER_URL:-http://127.0.0.1:8080}
+      # 注册令牌（服务端启动后通过管理界面或 API 查询）
+      PER_AGENT_REGISTER_TOKEN: ${PER_AGENT_REGISTER_TOKEN:-}
+    volumes:
+      # 持久化 Agent 数据：node_key、JMeter 引擎、任务执行数据
+      # 删除该卷会导致节点重新注册为新节点并重新下载引擎
+      - per-agent-data:/data
+    # Agent 资源限制：根据压测机配置调整，JMeter 子进程会消耗较多内存
+    deploy:
+      resources:
+        limits:
+          cpus: '${PER_AGENT_CPU_LIMIT:-4}'
+          memory: ${PER_AGENT_MEM_LIMIT:-8G}
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+volumes:
+  per-agent-data:

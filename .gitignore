@@ -1,0 +1,27 @@
+# ===== 构建产物 =====
+target/
+node_modules/
+per-web/dist/
+deploy/dist/
+deploy/per-server.jar
+deploy/per-agent.jar
+deploy/engine.zip
+*.class
+*.jar
+
+# ===== 本地运行数据（含引擎/密钥/任务产物，勿入库） =====
+per-agent/agent-data/
+per-server/server-data/
+*.log
+logs/
+
+# ===== 环境与密钥 =====
+.env
+.env.*
+*.local
+
+# ===== IDE / 系统 =====
+.idea/
+*.iml
+.vscode/
+.DS_Store

@@ -1,0 +1,37 @@
+# PerPress 压测平台 Agent 配置
+spring:
+  application:
+    name: per-agent
+  main:
+    # 非常驻 Web 模式（不引入 spring-boot-starter-web）
+    web-application-type: none
+  task:
+    scheduling:
+      pool:
+        # 所有定时任务共用单线程调度器，避免并发交错
+        size: 1
+
+per:
+  agent:
+    # 管理服务端地址
+    server-url: http://localhost:8080
+    # 注册令牌（与服务端配置保持一致）
+    register-token: 90ac231fc96c12477fcf791ddcad73f2
+    # 心跳上报间隔（秒）
+    heartbeat-interval-seconds: 10
+    # 任务指令轮询间隔（秒）
+    poll-interval-seconds: 2
+    # 心跳失联自停阈值（秒），达到后停止所有运行中的压测任务
+    heartbeat-lost-stop-seconds: 60
+    # 任务指令异步执行线程数（PREPARE/START 下载与启动在独立线程执行，与调度线程隔离）
+    task-worker-threads: 1
+    # 文件/引擎下载：请求超时（秒）
+    download-timeout-seconds: 60
+    # 文件/引擎下载：连接超时（秒）
+    download-connect-timeout-seconds: 5
+    # 本地工作目录：node_key 持久化、引擎目录 engine/、任务目录 tasks/
+    data-dir: ./agent-data
+    # JMeter 堆内存上限（MB）：任务未指定时使用的本地默认值（大压力场景可调高，或创建任务时按任务覆盖）
+    jmeter-heap-mb: 2048
+    # 指标上报聚合窗口（毫秒，最小 1000）：窗口越小监控越实时，上报频率相应提高
+    metrics-window-ms: 3000

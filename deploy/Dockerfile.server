@@ -1,0 +1,17 @@
+# =====================================================================
+# per-server 运行镜像：JRE17 + 服务 jar + 工作目录 /data（挂载卷）
+# =====================================================================
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+COPY per-server.jar /app/per-server.jar
+
+# 平台数据目录（文件存储/引擎包/Agent分发包），挂载 per-server-data 卷
+ENV TZ=Asia/Shanghai
+RUN mkdir -p /data
+VOLUME /data
+
+# 暴露管理面(经 nginx 反代)与 Agent 面端口
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/per-server.jar"]
