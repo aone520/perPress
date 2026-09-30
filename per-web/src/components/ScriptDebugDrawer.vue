@@ -10,7 +10,7 @@
 <template>
   <el-drawer
     v-model="visible"
-    title="脚本调试"
+    :title="title"
     size="62%"
     destroy-on-close
     :close-on-click-modal="false"
@@ -143,6 +143,9 @@ import { debugScript } from '@/api/script'
 /** 抽屉可见状态 */
 const visible = ref(false)
 
+/** 抽屉标题（一键调试 / 单接口调试） */
+const title = ref('脚本调试')
+
 /** 调试执行中 */
 const loading = ref(false)
 
@@ -167,10 +170,12 @@ const assertFailCount = computed(
 
 /**
  * 打开抽屉并执行调试：携带编辑器当前表单定义请求后端逐接口执行
- * @param {Object} formDef 表单定义（未保存的草稿也可调试）
+ * @param {Object} formDef 表单定义（未保存的草稿也可调试；单接口调试时仅含目标接口）
+ * @param {string} [drawerTitle] 抽屉标题（默认"脚本调试"，单接口场景传"调试接口"）
  */
-async function open(formDef) {
+async function open(formDef, drawerTitle = '脚本调试') {
   visible.value = true
+  title.value = drawerTitle
   loading.value = true
   items.value = []
   opened.value = -1

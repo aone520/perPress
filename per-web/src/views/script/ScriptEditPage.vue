@@ -223,6 +223,7 @@
                 <el-tag v-if="countOf(sampler.csvRefs)" size="small" effect="plain" type="info">文件 {{ countOf(sampler.csvRefs) }}</el-tag>
               </span>
               <span class="brief-actions" @click.stop>
+                <el-button link type="primary" @click="debugOne(gi, si)">调试</el-button>
                 <el-button link :disabled="si === 0" @click="moveSampler(gi, si, -1)">上移</el-button>
                 <el-button link :disabled="si === group.samplers.length - 1" @click="moveSampler(gi, si, 1)">下移</el-button>
                 <el-dropdown v-if="def.groups.length > 1" trigger="click" @command="(target) => moveSamplerToGroup(gi, si, target)">
@@ -610,6 +611,36 @@ function handleDebug() {
     return
   }
   debugRef.value?.open(sanitizeFormDef(def))
+}
+
+/**
+ * 单接口调试：构造仅含目标接口的表单定义（保留全局配置与该接口的参数文件引用），
+ * 全局变量与 CSV 首行数据可正常引用；串行链路中前置接口提取的变量不参与（独立执行语义）
+ * @param {number} gi 分组下标
+ * @param {number} si 组内接口下标
+ */
+function debugOne(gi, si) {
+  const group = def.groups[gi]
+  const sampler = group?.samplers?.[si]
+  if (!sampler) {
+    return
+  }
+  const url = (sampler.url || '').trim()
+  if (!url) {
+    ElMessage.warning('该接口未填写路径，无法调试')
+    return
+  }
+  if (!url.includes('://') && !hasGlobalEnv.value) {
+    ElMessage.warning('接口为相对路径，且基本信息未填写域名，无法调试')
+    return
+  }
+  debugRef.value?.open(
+    sanitizeFormDef({
+      config: def.config,
+      groups: [{ name: group.name, execution: group.execution, samplers: [sampler] }]
+    }),
+    '调试接口'
+  )
 }
 
 /** 内容滚动容器（大纲滚动定位与可视区监听） */

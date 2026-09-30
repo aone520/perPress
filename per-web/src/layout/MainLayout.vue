@@ -6,7 +6,7 @@
 <template>
   <el-container class="layout-root">
     <!-- 左侧导航（collapsed 时收起为 64px 图标栏，菜单项 hover 出 tooltip） -->
-    <el-aside :width="collapsed ? '64px' : '228px'" class="layout-aside" :class="{ collapsed }">
+    <el-aside :width="collapsed ? '64px' : '212px'" class="layout-aside" :class="{ collapsed }">
       <div class="logo" :class="{ collapsed }">
         <div class="logo-mark">P</div>
         <div v-if="!collapsed" class="logo-text">
@@ -211,14 +211,27 @@ function handleCommand(command) {
   padding: 6px 10px;
   background-color: transparent;
 }
+/* 折叠态：menu 自身去内边距，菜单项弹性撑满并图标居中 */
+.layout-aside.collapsed .side-menu {
+  padding: 6px 0;
+}
 .side-menu :deep(.el-menu-item) {
   height: 42px;
   line-height: 42px;
   margin-bottom: 2px;
+  padding: 0 12px;
   border-radius: 8px;
+  font-size: 15px;
   color: var(--pp-aside-text);
   background-color: transparent;
   transition: background-color 0.15s ease, color 0.15s ease;
+}
+/* 折叠态菜单项：flex 居中图标（EP 默认 padding 会造成偏移） */
+.layout-aside.collapsed .side-menu :deep(.el-menu-item) {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .side-menu :deep(.el-menu-item:hover) {
   background-color: var(--pp-aside-hover);
@@ -230,7 +243,11 @@ function handleCommand(command) {
 }
 .menu-icon {
   font-size: 17px;
-  margin-right: 4px;
+  margin-right: 6px;
+}
+/* 折叠态图标右间距归零，保证视觉居中 */
+.layout-aside.collapsed .menu-icon {
+  margin-right: 0;
 }
 
 .layout-body {
