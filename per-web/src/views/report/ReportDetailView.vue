@@ -14,23 +14,21 @@
 <template>
   <div class="page">
     <!-- 顶部：返回 + 打印 + 导出 -->
-    <el-page-header @back="goBack">
-      <template #content>
-        <span class="page-title">压测报告</span>
-      </template>
-      <template #extra>
+    <div class="page-header">
+      <span class="page-title">压测报告</span>
+      <div class="header-actions">
         <el-button :icon="Printer" @click="handlePrint">打印</el-button>
         <el-button type="primary" :icon="Download" :loading="exporting" @click="handleExport">
           导出
         </el-button>
-      </template>
-    </el-page-header>
+      </div>
+    </div>
 
     <div v-loading="loading" class="report-wrap">
       <template v-if="report">
         <!-- ① 报告头 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">报告头</span></template>
+        <div class="page-card block-card">
+          <div class="card-title">报告头</div>
           <el-descriptions :column="4" border>
             <el-descriptions-item label="任务号">
               <span class="mono">{{ summary.taskNo || route.params.id }}</span>
@@ -55,12 +53,12 @@
               </el-tag>
             </el-descriptions-item>
           </el-descriptions>
-        </el-card>
+        </div>
 
         <!-- ② 全局 KPI -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">全局 KPI</span></template>
-          <el-row :gutter="12">
+        <div class="page-card block-card">
+          <div class="card-title">全局 KPI</div>
+          <el-row :gutter="12" class="kpi-row">
             <el-col v-for="card in kpiCards" :key="card.label" class="kpi-col">
               <div class="kpi-box">
                 <div class="kpi-label">{{ card.label }}</div>
@@ -68,12 +66,12 @@
               </div>
             </el-col>
           </el-row>
-        </el-card>
+        </div>
 
         <!-- ③ 响应时间分位数 + RT 趋势 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">响应时间（ms）</span></template>
-          <el-table :data="[rtRow]" border size="small">
+        <div class="page-card block-card">
+          <div class="card-title">响应时间（ms）</div>
+          <el-table :data="[rtRow]" size="small">
             <el-table-column
               v-for="col in RT_COLS"
               :key="col.prop"
@@ -85,18 +83,18 @@
             </el-table-column>
           </el-table>
           <div ref="rtChartRef" class="chart-box" />
-        </el-card>
+        </div>
 
         <!-- ④ TPS 趋势 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">TPS 趋势</span></template>
+        <div class="page-card block-card">
+          <div class="card-title">TPS 趋势</div>
           <div ref="tpsChartRef" class="chart-box" />
-        </el-card>
+        </div>
 
         <!-- ⑤ 事务明细 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">事务明细（{{ samplers.length }}）</span></template>
-          <el-table :data="samplers" border stripe size="small">
+        <div class="page-card block-card">
+          <div class="card-title">事务明细（{{ samplers.length }}）</div>
+          <el-table :data="samplers" size="small">
             <el-table-column prop="label" label="事务" min-width="220" show-overflow-tooltip fixed />
             <el-table-column prop="count" label="请求数" width="100" align="right" sortable />
             <el-table-column label="错误率" width="100" align="right" sortable :sort-method="sortBy('errorRate')">
@@ -113,12 +111,12 @@
             <el-table-column prop="p99" label="P99" width="80" align="right" sortable />
             <el-table-column prop="maxMs" label="Max" width="80" align="right" sortable />
           </el-table>
-        </el-card>
+        </div>
 
         <!-- ⑥ 节点明细 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">节点明细（{{ nodes.length }}）</span></template>
-          <el-table :data="nodes" border stripe size="small">
+        <div class="page-card block-card">
+          <div class="card-title">节点明细（{{ nodes.length }}）</div>
+          <el-table :data="nodes" size="small">
             <el-table-column label="节点" min-width="150">
               <template #default="{ row }">
                 <!-- 优先显示主机名（IP 副行），节点已被删除等场景回退 nodeKey 缩略 -->
@@ -140,15 +138,15 @@
               <template #default="{ row }">{{ formatBytes(row.bytes) }}</template>
             </el-table-column>
           </el-table>
-        </el-card>
+        </div>
 
         <!-- ⑦ 错误分析 -->
-        <el-card shadow="never" class="block-card">
-          <template #header><span class="card-title">错误分析</span></template>
+        <div class="page-card block-card">
+          <div class="card-title">错误分析</div>
           <el-row :gutter="12">
             <el-col :span="8">
               <div class="sub-title">错误码分布</div>
-              <el-table :data="errors.byCode" border size="small" max-height="260">
+              <el-table :data="errors.byCode" size="small" max-height="260">
                 <el-table-column prop="code" label="响应码" align="center">
                   <template #default="{ row }">
                     <span class="mono">{{ row.code }}</span>
@@ -159,7 +157,7 @@
             </el-col>
             <el-col :span="8">
               <div class="sub-title">TOP 错误事务</div>
-              <el-table :data="errors.topSamplers" border size="small" max-height="260">
+              <el-table :data="errors.topSamplers" size="small" max-height="260">
                 <el-table-column prop="label" label="事务" min-width="140" show-overflow-tooltip />
                 <el-table-column prop="errorCount" label="错误数" width="90" align="right" />
                 <el-table-column label="错误率" width="90" align="right">
@@ -173,7 +171,7 @@
             </el-col>
           </el-row>
           <div class="sub-title">错误样本明细</div>
-          <el-table :data="errors.samples" border stripe size="small" max-height="320">
+          <el-table :data="errors.samples" size="small" max-height="320">
             <el-table-column label="时间" width="180" align="center">
               <template #default="{ row }">
                 {{ formatDateTime(row.createTime ?? row.ts) }}
@@ -193,14 +191,12 @@
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
+        </div>
 
         <!-- ⑧ 长尾与慢事务 -->
-        <el-card shadow="never" class="block-card">
-          <template #header>
-            <span class="card-title">长尾与慢事务（按 P99 降序，&gt;1000ms 标红）</span>
-          </template>
-          <el-table :data="slowSamplers" border size="small" :row-class-name="slowRowClass">
+        <div class="page-card block-card">
+          <div class="card-title">长尾与慢事务（按 P99 降序，&gt;1000ms 标红）</div>
+          <el-table :data="slowSamplers" size="small" :row-class-name="slowRowClass">
             <el-table-column prop="label" label="事务" min-width="240" show-overflow-tooltip />
             <el-table-column label="P95(ms)" width="110" align="right">
               <template #default="{ row }">{{ num(row.p95) }}</template>
@@ -215,7 +211,7 @@
               <template #default="{ row }">{{ pct(row.errorRate) }}</template>
             </el-table-column>
           </el-table>
-        </el-card>
+        </div>
       </template>
 
       <el-empty v-else-if="!loading" description="报告不存在或任务尚未生成报告" />
@@ -225,7 +221,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { Download, Printer } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts/core'
@@ -234,12 +230,20 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { exportReport, getTaskReport } from '@/api/metric'
 import { formatBytes, formatClock, formatDateTime } from '@/utils/format'
+import {
+  CHART_COLORS,
+  CHART_GRID,
+  chartCategoryAxis,
+  chartLegend,
+  chartLine,
+  chartTooltip,
+  chartValueAxis
+} from '@/utils/chartTheme'
 
 // echarts 按需注册：折线 / 柱状 + tooltip + legend + grid + canvas 渲染器
 echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const route = useRoute()
-const router = useRouter()
 
 /** 压测模式元信息：展示文案 */
 const MODE_META = {
@@ -312,16 +316,16 @@ const throughputKbps = computed(() => {
   return kb / seconds
 })
 
-/** 全局 KPI 8 张卡：单位统一放标题括号内，值只显示纯数值（避免打印换行） */
+/** 全局 KPI 8 张卡：单位统一放标题括号内，值只显示纯数值（避免打印换行）；配色走 chartTheme 低饱和色板 */
 const kpiCards = computed(() => [
-  { label: 'APDEX', value: summary.value.apdex ?? '-', color: '#9254de' },
-  { label: '总请求', value: num(summary.value.totalCount), color: '#409eff' },
-  { label: '总错误', value: num(summary.value.totalErrorCount), color: '#f56c6c' },
-  { label: '错误率 (%)', value: fixed(summary.value.errorRate), color: '#f56c6c' },
-  { label: '平均 TPS', value: num(summary.value.avgTps), color: '#409eff' },
-  { label: '峰值 TPS', value: num(summary.value.peakTps), color: '#67c23a' },
-  { label: '吞吐 (KB/s)', value: fixed(throughputKbps.value), color: '#e6a23c' },
-  { label: '峰值线程', value: num(summary.value.peakThreads), color: '#909399' }
+  { label: 'APDEX', value: summary.value.apdex ?? '-', color: CHART_COLORS.violet },
+  { label: '总请求', value: num(summary.value.totalCount), color: CHART_COLORS.primary },
+  { label: '总错误', value: num(summary.value.totalErrorCount), color: CHART_COLORS.rose },
+  { label: '错误率 (%)', value: fixed(summary.value.errorRate), color: CHART_COLORS.rose },
+  { label: '平均 TPS', value: num(summary.value.avgTps), color: CHART_COLORS.primary },
+  { label: '峰值 TPS', value: num(summary.value.peakTps), color: CHART_COLORS.teal },
+  { label: '吞吐 (KB/s)', value: fixed(throughputKbps.value), color: CHART_COLORS.amber },
+  { label: '峰值线程', value: num(summary.value.peakThreads), color: CHART_COLORS.slate }
 ])
 
 /**
@@ -419,34 +423,30 @@ function slowRowClass({ row }) {
 }
 
 /**
- * 构建基础 xAxis 配置：类目轴 + 时间格式化为 HH:mm:ss（兼容秒/毫秒时间戳）+ 重叠标签自动隐藏
+ * 构建基础 xAxis 配置：时间格式化为 HH:mm:ss（兼容秒/毫秒时间戳），样式走 chartTheme 统一类目轴
  * @param {Array} list 时间序列
  * @returns {Object} ECharts xAxis 选项
  */
 function baseXAxis(list) {
-  return {
-    type: 'category',
-    data: list.map((i) => formatClock(i.t)),
-    axisLabel: { hideOverlap: true }
-  }
+  return chartCategoryAxis(list.map((i) => formatClock(i.t)))
 }
 
 /**
- * 渲染 RT 趋势曲线（avg/p95/p99 三线）
+ * 渲染 RT 趋势曲线（avg/p90/p95/p99 四线，低饱和主题色）
  */
 function renderRtChart() {
   rtChart?.setOption(
     {
-      tooltip: { trigger: 'axis', valueFormatter: (v) => (v == null ? '-' : `${v} ms`) },
-      legend: { top: 4, data: ['Avg', 'P90', 'P95', 'P99'] },
-      grid: { left: 52, right: 24, top: 42, bottom: 28 },
+      tooltip: chartTooltip(' ms'),
+      legend: chartLegend(['Avg', 'P90', 'P95', 'P99']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series.value),
-      yAxis: { type: 'value', name: 'ms' },
+      yAxis: chartValueAxis('ms'),
       series: [
-        { name: 'Avg', type: 'line', smooth: false, showSymbol: false, itemStyle: { color: '#409eff' }, data: series.value.map((i) => (i.avgMs == null ? null : Number(i.avgMs))) },
-        { name: 'P90', type: 'line', smooth: false, showSymbol: false, itemStyle: { color: '#67c23a' }, data: series.value.map((i) => (i.p90 == null ? null : Number(i.p90))) },
-        { name: 'P95', type: 'line', smooth: false, showSymbol: false, itemStyle: { color: '#e6a23c' }, data: series.value.map((i) => (i.p95 == null ? null : Number(i.p95))) },
-        { name: 'P99', type: 'line', smooth: false, showSymbol: false, itemStyle: { color: '#f56c6c' }, data: series.value.map((i) => (i.p99 == null ? null : Number(i.p99))) }
+        chartLine('Avg', series.value.map((i) => (i.avgMs == null ? null : Number(i.avgMs))), CHART_COLORS.primary),
+        chartLine('P90', series.value.map((i) => (i.p90 == null ? null : Number(i.p90))), CHART_COLORS.teal),
+        chartLine('P95', series.value.map((i) => (i.p95 == null ? null : Number(i.p95))), CHART_COLORS.amber),
+        chartLine('P99', series.value.map((i) => (i.p99 == null ? null : Number(i.p99))), CHART_COLORS.rose)
       ]
     },
     true
@@ -459,13 +459,13 @@ function renderRtChart() {
 function renderTpsChart() {
   tpsChart?.setOption(
     {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'line' } },
-      legend: { top: 4, data: ['TPS'] },
-      grid: { left: 52, right: 24, top: 42, bottom: 28 },
+      tooltip: chartTooltip(),
+      legend: chartLegend(['TPS']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series.value),
-      yAxis: [{ type: 'value', name: 'TPS', minInterval: 1 }],
+      yAxis: [{ ...chartValueAxis('TPS'), minInterval: 1 }],
       series: [
-        { name: 'TPS', type: 'line', smooth: false, showSymbol: false, itemStyle: { color: '#409eff' }, data: series.value.map((i) => Number(i.tps) || 0) }
+        chartLine('TPS', series.value.map((i) => Number(i.tps) || 0), CHART_COLORS.primary)
       ]
     },
     true
@@ -473,18 +473,18 @@ function renderTpsChart() {
 }
 
 /**
- * 渲染错误时间分布小曲线（柱状）
+ * 渲染错误时间分布小曲线（平滑线，玫红色）
  */
 function renderErrChart() {
   const timeline = errors.value.timeline || []
   errChart?.setOption(
     {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: { ...chartTooltip(), axisPointer: { type: 'shadow' } },
       grid: { left: 40, right: 12, top: 16, bottom: 24 },
       xAxis: baseXAxis(timeline),
-      yAxis: { type: 'value', name: '错误', minInterval: 1 },
+      yAxis: [{ ...chartValueAxis('错误'), minInterval: 1 }],
       series: [
-        { name: '错误数', type: 'line', smooth: true, showSymbol: false, itemStyle: { color: '#f56c6c' }, data: timeline.map((i) => Number(i.errorCount) || 0) }
+        { ...chartLine('错误数', timeline.map((i) => Number(i.errorCount) || 0), CHART_COLORS.rose), smooth: true }
       ]
     },
     true
@@ -586,13 +586,6 @@ function handleResize() {
   errChart?.resize()
 }
 
-/**
- * 返回报告列表页
- */
-function goBack() {
-  router.push('/reports')
-}
-
 // 页面挂载：注册 resize 监听并加载数据（图表初始化由 load 内懒执行）
 onMounted(() => {
   window.addEventListener('resize', handleResize)
@@ -619,10 +612,10 @@ onUnmounted(() => {
  * 3) 展开主内容区滚动容器，避免打印内容被裁切
  */
 @media print {
-  /* 隐藏平台框架与页面操作按钮 */
+  /* 隐藏平台框架与本页操作区（打印/导出按钮所在的页头） */
   .layout-aside,
   .layout-header,
-  .el-page-header {
+  .page-header {
     display: none !important;
   }
   /* 报告主体占满纸张并去掉页边留白 */
@@ -654,15 +647,14 @@ onUnmounted(() => {
     font-size: 12px !important;
     line-height: 1.6 !important;
   }
-  .report-wrap .block-title,
+  .report-wrap .card-title,
   .report-wrap .el-descriptions__title,
   .report-wrap h3 {
     font-size: 14px !important;
     font-weight: 600 !important;
   }
   /* KPI 数值保留视觉层次但统一尺寸（纯数值+单位在标题，打印不换行） */
-  .report-wrap .kpi-value,
-  .report-wrap .metric-value {
+  .report-wrap .kpi-value {
     font-size: 15px !important;
     font-weight: 700 !important;
   }
@@ -678,7 +670,7 @@ onUnmounted(() => {
 .page-title {
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
 .report-wrap {
@@ -693,13 +685,13 @@ onUnmounted(() => {
 .card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
 .sub-title {
   font-size: 13px;
   font-weight: 600;
-  color: #606266;
+  color: var(--pp-text-regular);
   margin: 6px 0 8px;
 }
 
@@ -712,13 +704,13 @@ onUnmounted(() => {
 .kpi-box {
   text-align: center;
   padding: 10px 4px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--pp-border);
   border-radius: 6px;
 }
 
 .kpi-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .kpi-value {
@@ -742,7 +734,7 @@ onUnmounted(() => {
 }
 
 .mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 13px;
 }
 
@@ -759,12 +751,12 @@ onUnmounted(() => {
 
 .node-ip {
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .error-text {
   display: block;
-  color: #f56c6c;
+  color: var(--pp-danger);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -772,10 +764,10 @@ onUnmounted(() => {
 
 /* 长尾表：p99 > 1000ms 的行整体标红 */
 :deep(tr.slow-row) {
-  color: #f56c6c;
+  color: var(--pp-danger);
 }
 
 :deep(tr.slow-row td .cell) {
-  color: #f56c6c;
+  color: var(--pp-danger);
 }
 </style>

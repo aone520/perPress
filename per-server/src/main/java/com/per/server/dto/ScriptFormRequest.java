@@ -27,11 +27,15 @@ public class ScriptFormRequest {
     private FormDef formDef;
 
     /**
-     * 表单场景定义：线程组 + 采样器集合 + 思考时间；
+     * 表单场景定义：全局配置 + 线程组 + 采样器集合 + 思考时间；
      * groups 存在时以其为编排结构（组内串行/并行），无 groups 时 samplers 视为单串行组（旧数据兼容）
      */
     @Data
     public static class FormDef {
+
+        /** 全局配置（目标环境 + 自定义变量），旧数据无此字段为 null，行为不变 */
+        @Valid
+        private Config config;
 
         /** 线程组名称 */
         private String threadGroupName;
@@ -154,6 +158,41 @@ public class ScriptFormRequest {
 
         /** 未提取到时的默认值（建议非空，便于断言定位） */
         private String defaultValue;
+    }
+
+    /**
+     * 全局配置：统一目标环境（协议/域名/端口）+ 自定义变量；
+     * 采样器 url 为相对路径（无 scheme）时用环境补全为绝对地址，换环境只需改一处；
+     * 自定义变量注入 JMX TestPlan 的 User Defined Variables，接口任意位置以 ${name} 引用
+     */
+    @Data
+    public static class Config {
+
+        /** 全局协议：http/https（默认 http） */
+        private String protocol;
+
+        /** 全局域名（host，可含端口外的主机名/IP） */
+        private String host;
+
+        /** 全局端口（可空 = 协议默认端口不渲染） */
+        private Integer port;
+
+        /** 自定义变量列表（注入 TestPlan User Defined Variables） */
+        @Valid
+        private List<Variable> variables;
+    }
+
+    /**
+     * 自定义变量：name/value 键值对，渲染为 TestPlan UDV 条目
+     */
+    @Data
+    public static class Variable {
+
+        /** 变量名（接口中以 ${name} 引用） */
+        private String name;
+
+        /** 变量值（支持 ${otherVar} 引用其它变量） */
+        private String value;
     }
 
     /**

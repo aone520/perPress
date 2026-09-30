@@ -9,10 +9,8 @@
 <template>
   <div class="page">
     <!-- 任务选择态：未携带 taskId -->
-    <el-card v-if="!taskId" shadow="never" class="picker-card">
-      <template #header>
-        <span class="card-title">监控大屏 · 选择任务</span>
-      </template>
+    <div v-if="!taskId" class="page-card picker-card">
+      <div class="card-title">监控大屏 · 选择任务</div>
       <el-empty v-if="!pickerLoading && !taskOptions.length" description="暂无可监控的任务" />
       <div v-else class="picker-body">
         <el-select
@@ -40,62 +38,62 @@
         </el-select>
         <div class="picker-tip">仅展示近 20 条非「已创建」状态的任务</div>
       </div>
-    </el-card>
+    </div>
 
     <!-- 监控态：携带 taskId -->
     <template v-else>
       <!-- 头部：任务信息 + 轮询状态 -->
-      <el-card shadow="never" class="head-card">
+      <div class="page-card head-card">
         <div class="head-bar">
           <div class="head-info">
             <span class="mono head-no">{{ task?.taskNo || taskId }}</span>
             <span class="head-name">{{ task?.name || '任务加载中…' }}</span>
-            <el-tag v-if="task" :type="TASK_STATUS_META[task.status]?.type || 'info'">
+            <el-tag v-if="task" :type="TASK_STATUS_META[task.status]?.type || 'info'" size="small">
               {{ TASK_STATUS_META[task.status]?.text || task.status }}
             </el-tag>
-            <el-tag v-if="finished" type="info" effect="plain">数据为最终态</el-tag>
-            <el-tag v-else type="success" effect="plain">实时刷新中（3s）</el-tag>
+            <el-tag v-if="finished" type="info" effect="plain" size="small">数据为最终态</el-tag>
+            <el-tag v-else type="success" effect="plain" size="small">实时刷新中（3s）</el-tag>
           </div>
           <el-button :icon="SwitchButton" @click="switchTask">切换任务</el-button>
         </div>
-      </el-card>
+      </div>
 
-      <!-- KPI 行：5 张指标卡（flex 均分，避免 24 栅格除不尽溢出） -->
-      <el-row :gutter="12" class="kpi-row">
-        <el-col v-for="card in kpiCards" :key="card.label" class="kpi-col">
-          <el-card shadow="never" class="kpi-card">
+      <!-- KPI 行：6 张指标卡（flex 均分，避免 24 栅格除不尽溢出） -->
+      <div class="kpi-row">
+        <div v-for="card in kpiCards" :key="card.label" class="kpi-col">
+          <div class="kpi-box">
             <div class="kpi-label">{{ card.label }}</div>
             <div class="kpi-value" :style="{ color: card.color }">{{ card.value }}</div>
             <div class="kpi-sub">{{ card.sub }}</div>
-          </el-card>
-        </el-col>
-      </el-row>
+          </div>
+        </div>
+      </div>
 
       <!-- 图表区：2×2 四张曲线 -->
       <el-row :gutter="12">
         <el-col :span="12">
-          <el-card shadow="never" class="chart-card">
+          <div class="page-card chart-card">
             <div class="chart-title">TPS</div>
             <div ref="tpsChartRef" class="chart-box" />
-          </el-card>
+          </div>
         </el-col>
         <el-col :span="12">
-          <el-card shadow="never" class="chart-card">
+          <div class="page-card chart-card">
             <div class="chart-title">响应时间（ms）</div>
             <div ref="rtChartRef" class="chart-box" />
-          </el-card>
+          </div>
         </el-col>
         <el-col :span="12">
-          <el-card shadow="never" class="chart-card">
+          <div class="page-card chart-card">
             <div class="chart-title">错误率（%）</div>
             <div ref="errChartRef" class="chart-box" />
-          </el-card>
+          </div>
         </el-col>
         <el-col :span="12">
-          <el-card shadow="never" class="chart-card">
+          <div class="page-card chart-card">
             <div class="chart-title">活跃线程</div>
             <div ref="threadChartRef" class="chart-box" />
-          </el-card>
+          </div>
         </el-col>
       </el-row>
     </template>
@@ -114,6 +112,15 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { page as pageTasks, detail as taskDetail } from '@/api/task'
 import { getTaskMetrics } from '@/api/metric'
 import { formatClock } from '@/utils/format'
+import {
+  CHART_COLORS,
+  CHART_GRID,
+  chartCategoryAxis,
+  chartLegend,
+  chartLine,
+  chartTooltip,
+  chartValueAxis
+} from '@/utils/chartTheme'
 
 // echarts 按需注册：折线 / 柱状 + tooltip + legend + grid + canvas 渲染器
 echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -253,43 +260,43 @@ const errorRate = computed(() => {
   return ((totalError.value / totalCount.value) * 100).toFixed(2)
 })
 
-/** KPI 行 6 张卡的展示数据（APDEX 为行业标准满意度指数，阈值 500/1500ms） */
+/** KPI 行 6 张卡的展示数据（APDEX 为行业标准满意度指数，阈值 500/1500ms）；配色走 chartTheme 低饱和色板 */
 const kpiCards = computed(() => [
   {
     label: '当前 TPS',
     value: latest.value ? (Number(latest.value.tps) || 0).toLocaleString() : '-',
     sub: '最新采样窗口',
-    color: '#409eff'
+    color: CHART_COLORS.primary
   },
   {
     label: '平均 RT',
     value: avgRt.value === '-' ? '-' : `${avgRt.value} ms`,
     sub: '全窗口均值',
-    color: '#67c23a'
+    color: CHART_COLORS.teal
   },
   {
     label: 'P95',
     value: latest.value ? `${Number(latest.value.p95) || 0} ms` : '-',
     sub: '最新采样窗口',
-    color: '#e6a23c'
+    color: CHART_COLORS.amber
   },
   {
     label: 'APDEX',
     value: metrics.total?.apdex ?? '-',
     sub: '满意度（≤500ms 满分）',
-    color: '#9254de'
+    color: CHART_COLORS.violet
   },
   {
     label: '错误率',
     value: `${errorRate.value}%`,
     sub: `总请求 ${(Number(totalCount.value) || 0).toLocaleString()} 次`,
-    color: '#f56c6c'
+    color: CHART_COLORS.rose
   },
   {
     label: '活跃线程',
     value: latest.value ? Number(latest.value.threads) || 0 : '-',
     sub: '最新采样窗口',
-    color: '#909399'
+    color: CHART_COLORS.slate
   }
 ])
 
@@ -306,36 +313,12 @@ function windowCounts(series) {
 }
 
 /**
- * 构建基础 xAxis 配置：类目轴 + 时间格式化为 HH:mm:ss（兼容秒/毫秒时间戳）+ 重叠标签自动隐藏
+ * 构建基础 xAxis 配置：时间格式化为 HH:mm:ss（兼容秒/毫秒时间戳），样式走 chartTheme 统一类目轴
  * @param {Array} series 指标序列
  * @returns {Object} ECharts xAxis 选项
  */
 function baseXAxis(series) {
-  return {
-    type: 'category',
-    data: series.map((i) => formatClock(i.t)),
-    axisLabel: { hideOverlap: true }
-  }
-}
-
-/**
- * 构建基础 grid 配置（四张图共用版式）
- * @returns {Object} ECharts grid 选项
- */
-function baseGrid() {
-  return { left: 52, right: 52, top: 42, bottom: 28 }
-}
-
-/**
- * 构建基础 tooltip 配置（轴触发，附单位）
- * @param {string} [unit] 数值单位
- * @returns {Object} ECharts tooltip 选项
- */
-function baseTooltip(unit = '') {
-  return {
-    trigger: 'axis',
-    valueFormatter: (value) => (value == null ? '-' : `${value}${unit}`)
-  }
+  return chartCategoryAxis(series.map((i) => formatClock(i.t)))
 }
 
 /**
@@ -345,20 +328,13 @@ function baseTooltip(unit = '') {
 function renderTpsChart(series) {
   chartInstances[0]?.setOption(
     {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'line' } },
-      legend: { top: 4, data: ['TPS'] },
-      grid: baseGrid(),
+      tooltip: chartTooltip(),
+      legend: chartLegend(['TPS']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series),
-      yAxis: [{ type: 'value', name: 'TPS', minInterval: 1 }],
+      yAxis: [{ ...chartValueAxis('TPS'), minInterval: 1 }],
       series: [
-        {
-          name: 'TPS',
-          type: 'line',
-          smooth: false,
-          showSymbol: false,
-          itemStyle: { color: '#409eff' },
-          data: series.map((i) => Number(i.tps) || 0)
-        }
+        chartLine('TPS', series.map((i) => Number(i.tps) || 0), CHART_COLORS.primary)
       ]
     },
     true
@@ -366,30 +342,22 @@ function renderTpsChart(series) {
 }
 
 /**
- * 渲染 RT 图：avg / p90 / p95 / p99 四条折线（直线连接不平滑，真实呈现毛刺与台阶）
+ * 渲染 RT 图：avg / p90 / p95 / p99 四条折线（直线连接不平滑，真实呈现毛刺与台阶，低饱和主题色）
  * @param {Array} series 指标序列
  */
 function renderRtChart(series) {
-  const mk = (name, key, color) => ({
-    name,
-    type: 'line',
-    smooth: false,
-    showSymbol: false,
-    itemStyle: { color },
-    data: series.map((i) => (i[key] == null ? null : Number(i[key])))
-  })
   chartInstances[1]?.setOption(
     {
-      tooltip: baseTooltip(' ms'),
-      legend: { top: 4, data: ['Avg', 'P90', 'P95', 'P99'] },
-      grid: baseGrid(),
+      tooltip: chartTooltip(' ms'),
+      legend: chartLegend(['Avg', 'P90', 'P95', 'P99']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series),
-      yAxis: { type: 'value', name: 'ms' },
+      yAxis: chartValueAxis('ms'),
       series: [
-        mk('Avg', 'avgMs', '#409eff'),
-        mk('P90', 'p90', '#67c23a'),
-        mk('P95', 'p95', '#e6a23c'),
-        mk('P99', 'p99', '#f56c6c')
+        chartLine('Avg', series.map((i) => (i.avgMs == null ? null : Number(i.avgMs))), CHART_COLORS.primary),
+        chartLine('P90', series.map((i) => (i.p90 == null ? null : Number(i.p90))), CHART_COLORS.teal),
+        chartLine('P95', series.map((i) => (i.p95 == null ? null : Number(i.p95))), CHART_COLORS.amber),
+        chartLine('P99', series.map((i) => (i.p99 == null ? null : Number(i.p99))), CHART_COLORS.rose)
       ]
     },
     true
@@ -397,7 +365,7 @@ function renderRtChart(series) {
 }
 
 /**
- * 渲染错误率图：累计错误率（%）折线
+ * 渲染错误率图：累计错误率（%）平滑面积线
  * @param {Array} series 指标序列
  */
 function renderErrChart(series) {
@@ -411,19 +379,16 @@ function renderErrChart(series) {
   })
   chartInstances[2]?.setOption(
     {
-      tooltip: baseTooltip(' %'),
-      legend: { top: 4, data: ['累计错误率'] },
-      grid: baseGrid(),
+      tooltip: chartTooltip(' %'),
+      legend: chartLegend(['累计错误率']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series),
-      yAxis: { type: 'value', name: '%', axisLabel: { formatter: '{value}%' } },
+      yAxis: { ...chartValueAxis('%'), axisLabel: { color: '#7a8194', fontSize: 11, formatter: '{value}%' } },
       series: [
         {
-          name: '累计错误率',
-          type: 'line',
+          ...chartLine('累计错误率', rates, CHART_COLORS.rose),
           smooth: true,
-          areaStyle: { opacity: 0.12 },
-          itemStyle: { color: '#f56c6c' },
-          data: rates
+          areaStyle: { opacity: 0.12 }
         }
       ]
     },
@@ -438,18 +403,15 @@ function renderErrChart(series) {
 function renderThreadChart(series) {
   chartInstances[3]?.setOption(
     {
-      tooltip: baseTooltip(''),
-      legend: { top: 4, data: ['活跃线程'] },
-      grid: baseGrid(),
+      tooltip: chartTooltip(),
+      legend: chartLegend(['活跃线程']),
+      grid: CHART_GRID,
       xAxis: baseXAxis(series),
-      yAxis: { type: 'value', name: '线程', minInterval: 1 },
+      yAxis: [{ ...chartValueAxis('线程'), minInterval: 1 }],
       series: [
         {
-          name: '活跃线程',
-          type: 'line',
-          step: 'middle',
-          itemStyle: { color: '#67c23a' },
-          data: series.map((i) => (i.threads == null ? null : Number(i.threads)))
+          ...chartLine('活跃线程', series.map((i) => (i.threads == null ? null : Number(i.threads))), CHART_COLORS.teal),
+          step: 'middle'
         }
       ]
     },
@@ -628,7 +590,7 @@ onUnmounted(() => {
 .card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
 .picker-body {
@@ -655,7 +617,7 @@ onUnmounted(() => {
 .picker-tip {
   margin-top: 10px;
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .head-card {
@@ -677,35 +639,41 @@ onUnmounted(() => {
 
 .head-no {
   font-size: 13px;
-  color: #606266;
+  color: var(--pp-text-regular);
 }
 
 .head-name {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* KPI 行：卡片之间留 12px 间距，每张卡 flex 均分（24 栅格无法被 6 整除） */
 .kpi-row {
+  display: flex;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
-/* KPI 卡等宽均分（Element Plus 栅格 24 列无法被 5 整除，改用 flex） */
 .kpi-col {
   flex: 1 1 0;
   min-width: 0;
 }
 
-.kpi-card {
+.kpi-box {
   text-align: center;
+  padding: 14px 8px;
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-border);
+  border-radius: var(--pp-radius);
 }
 
 .kpi-label {
   font-size: 13px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .kpi-value {
@@ -717,7 +685,7 @@ onUnmounted(() => {
 
 .kpi-sub {
   font-size: 12px;
-  color: #c0c4cc;
+  color: var(--pp-text-placeholder);
 }
 
 .chart-card {
@@ -727,7 +695,7 @@ onUnmounted(() => {
 .chart-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
   margin-bottom: 8px;
 }
 
@@ -737,7 +705,7 @@ onUnmounted(() => {
 }
 
 .mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 13px;
 }
 </style>

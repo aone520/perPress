@@ -5,13 +5,14 @@
 -->
 <template>
   <div class="page">
-    <!-- 搜索工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <!-- 搜索工具栏（page-card 全局卡片类：白底/细边框/圆角/淡阴影） -->
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <el-input
           v-model="query.keyword"
           placeholder="关键字（用户 / 动作）"
           clearable
+          :prefix-icon="Search"
           class="w-260"
           @keyup.enter="handleSearch"
           @clear="handleSearch"
@@ -19,11 +20,11 @@
         <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
         <el-button :icon="RefreshLeft" @click="handleReset">重置</el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 日志列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column label="时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
         </el-table-column>
@@ -53,7 +54,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -127,8 +128,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 工具栏卡片与列表卡片间距（与其它列表页一致） */
 .toolbar-card {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .toolbar {

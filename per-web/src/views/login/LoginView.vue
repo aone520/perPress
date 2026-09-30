@@ -4,8 +4,15 @@
 -->
 <template>
   <div class="login-page">
-    <el-card shadow="always" class="login-card">
-      <div class="login-title">PerPress 压测平台</div>
+    <div class="login-card">
+      <!-- 品牌区：圆角方块 logo + 产品名 + 副标语 -->
+      <div class="brand">
+        <div class="brand-logo">P</div>
+        <div class="brand-text">
+          <div class="brand-name">PerPress</div>
+          <div class="brand-slogan">分布式压测平台</div>
+        </div>
+      </div>
       <el-form :model="form" label-position="top" @submit.prevent>
         <el-form-item>
           <el-input
@@ -44,7 +51,7 @@
           登 录
         </el-button>
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -112,27 +119,64 @@ async function handleLogin() {
 </script>
 
 <style scoped>
+/* 登录页整页：浅色底、水平垂直居中 */
 .login-page {
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1d2939 0%, #2f4562 50%, #3a5a8c 100%);
+  background: var(--pp-bg);
 }
 
+/* 登录卡：白底 + 细边框 + 14px 圆角 + 柔和大投影 */
 .login-card {
   width: 380px;
-  padding: 8px 12px 4px;
+  padding: 36px 32px 32px;
+  box-sizing: border-box;
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(16, 17, 22, 0.08);
 }
 
-.login-title {
-  text-align: center;
-  font-size: 20px;
+/* 品牌区：圆角方块 logo 与名称/副标语横向排列 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 26px;
+}
+
+/* 品牌方块：30px 渐变底圆角小方块，白色粗体 P */
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6e79dc, #4b55a8);
+  color: var(--pp-surface);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 品牌名 */
+.brand-name {
+  font-size: 15px;
   font-weight: 600;
-  color: #303133;
-  margin-bottom: 24px;
+  color: var(--pp-text-primary);
+  line-height: 1.2;
 }
 
+/* 品牌副标语 */
+.brand-slogan {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--pp-text-secondary);
+}
+
+/* 登录按钮占满卡宽 */
 .login-btn {
   width: 100%;
   margin-top: 4px;

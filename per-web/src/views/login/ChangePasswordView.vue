@@ -7,8 +7,17 @@
 -->
 <template>
   <div class="change-password-page">
-    <el-card shadow="always" class="change-password-card">
-      <div class="page-title">修改密码</div>
+    <div class="change-password-card">
+      <!-- 品牌区：圆角方块 logo + 产品名 + 副标语（与登录页同款视觉） -->
+      <div class="brand">
+        <div class="brand-logo">P</div>
+        <div class="brand-text">
+          <div class="brand-name">PerPress</div>
+          <div class="brand-slogan">分布式压测平台</div>
+        </div>
+      </div>
+      <!-- 卡片标题 -->
+      <div class="card-title form-title">修改密码</div>
       <el-alert
         v-if="mustChange"
         type="warning"
@@ -73,7 +82,7 @@
           <el-link type="primary" :underline="false" @click="goLogin">返回登录</el-link>
         </div>
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -162,36 +171,80 @@ function goLogin() {
 </script>
 
 <style scoped>
+/* 修改密码页整页：浅色底、水平垂直居中（与登录页同款视觉） */
 .change-password-page {
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1d2939 0%, #2f4562 50%, #3a5a8c 100%);
+  background: var(--pp-bg);
 }
 
+/* 居中卡片：白底 + 细边框 + 14px 圆角 + 柔和大投影 */
 .change-password-card {
-  width: 400px;
-  padding: 8px 12px 4px;
+  width: 380px;
+  padding: 36px 32px 32px;
+  box-sizing: border-box;
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(16, 17, 22, 0.08);
 }
 
-.page-title {
-  text-align: center;
-  font-size: 20px;
+/* 品牌区：圆角方块 logo 与名称/副标语横向排列 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+/* 品牌方块：30px 渐变底圆角小方块，白色粗体 P */
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6e79dc, #4b55a8);
+  color: var(--pp-surface);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 品牌名 */
+.brand-name {
+  font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
+  line-height: 1.2;
+}
+
+/* 品牌副标语 */
+.brand-slogan {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--pp-text-secondary);
+}
+
+/* 卡片标题（card-title 为全局类，这里仅补间距） */
+.form-title {
   margin-bottom: 18px;
 }
 
+/* 强制改密提示条与表单的间距 */
 .must-change-alert {
   margin-bottom: 14px;
 }
 
+/* 提交按钮占满卡宽 */
 .submit-btn {
   width: 100%;
   margin-top: 4px;
 }
 
+/* 返回登录入口 */
 .back-login {
   text-align: center;
   margin-top: 12px;

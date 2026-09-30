@@ -1,0 +1,136 @@
+/**
+ * Element Plus 主题覆盖：通过官方 CSS 变量（--el-*）整套换肤，
+ * 必须在 element-plus/dist/index.css 之后引入才能生效；
+ * 色值与 tokens.css 一一对应（light-3/5/7/8/9 为主色与白色逐级混合）
+ */
+:root {
+  /* ===== 主色（Linear 靛蓝）全套变体 ===== */
+  --el-color-primary: #5e6ad2;
+  --el-color-primary-light-3: #8e97e0;
+  --el-color-primary-light-5: #afb5e9;
+  --el-color-primary-light-7: #cfd2f2;
+  --el-color-primary-light-8: #dfe1f6;
+  --el-color-primary-light-9: #eff0fb;
+  --el-color-primary-dark-2: #4b55a8;
+
+  /* ===== 功能色变体 ===== */
+  --el-color-success: #3b9e6e;
+  --el-color-success-light-3: #76bb9a;
+  --el-color-success-light-5: #9dcfb7;
+  --el-color-success-light-7: #c4e2d3;
+  --el-color-success-light-8: #d8ece0;
+  --el-color-success-light-9: #ecf6ee;
+  --el-color-success-dark-2: #2f7e58;
+
+  --el-color-warning: #d79a2e;
+  --el-color-warning-light-3: #e3b86d;
+  --el-color-warning-light-5: #ebcd97;
+  --el-color-warning-light-7: #f2e1c0;
+  --el-color-warning-light-8: #f6ead3;
+  --el-color-warning-light-9: #fbf4e6;
+  --el-color-warning-dark-2: #ac7b25;
+
+  --el-color-danger: #d2554f;
+  --el-color-danger-light-3: #e08884;
+  --el-color-danger-light-5: #e9aaa7;
+  --el-color-danger-light-7: #f1ccca;
+  --el-color-danger-light-8: #f6dddb;
+  --el-color-danger-light-9: #faeeed;
+  --el-color-danger-dark-2: #a8443f;
+  --el-color-error: var(--el-color-danger);
+  --el-color-error-light-3: var(--el-color-danger-light-3);
+  --el-color-error-light-5: var(--el-color-danger-light-5);
+  --el-color-error-light-7: var(--el-color-danger-light-7);
+  --el-color-error-light-8: var(--el-color-danger-light-8);
+  --el-color-error-light-9: var(--el-color-danger-light-9);
+  --el-color-error-dark-2: var(--el-color-danger-dark-2);
+
+  /* ===== 文字与边框（对齐 tokens 灰阶） ===== */
+  --el-text-color-primary: #1a1d24;
+  --el-text-color-regular: #4a5060;
+  --el-text-color-secondary: #7a8194;
+  --el-text-color-placeholder: #a3a9b8;
+  --el-border-color: #e9ebf0;
+  --el-border-color-light: #e9ebf0;
+  --el-border-color-lighter: #eff1f5;
+  --el-border-color-extra-light: #f2f4f7;
+  --el-fill-color-light: #f5f6f9;
+  --el-fill-color-lighter: #f9fafb;
+  --el-bg-color-page: #f7f8fa;
+
+  /* ===== 圆角与阴影（克制） ===== */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 20px;
+  --el-box-shadow: 0 4px 14px rgba(16, 17, 22, 0.07);
+  --el-box-shadow-light: 0 1px 2px rgba(16, 17, 22, 0.04);
+
+  /* ===== 字体对齐 ===== */
+  --el-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+}
+
+/* ===== 组件级微调：让默认形态更贴极简基调 ===== */
+
+/* 按钮去粗重描边感：默认按钮字重 500、高度紧凑 */
+.el-button {
+  font-weight: 500;
+}
+
+/* 主按钮 hover 提亮，不用位移 */
+.el-button--primary:hover {
+  --el-button-hover-bg-color: var(--pp-primary-hover);
+  --el-button-hover-border-color: var(--pp-primary-hover);
+}
+
+/* 卡片：统一圆角与极淡阴影（配合各页面 shadow="never" 使用） */
+.el-card {
+  border-radius: var(--pp-radius);
+  border-color: var(--pp-border);
+}
+
+/* 表格：浅灰表头、细分割线、行 hover 平滑 */
+.el-table {
+  --el-table-header-bg-color: #f9fafb;
+  --el-table-header-text-color: #7a8194;
+  --el-table-row-hover-bg-color: #f7f8fc;
+  --el-table-border-color: #eff1f5;
+  border-radius: var(--pp-radius-sm);
+}
+.el-table th.el-table__cell {
+  font-weight: 500;
+  height: 44px;
+}
+
+/* 弹窗/抽屉：加大圆角，顶部细分割 */
+.el-dialog {
+  border-radius: 12px;
+}
+.el-drawer {
+  border-radius: 12px 0 0 12px;
+}
+
+/* 输入类控件聚焦色统一主色 */
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--pp-primary) inset !important;
+}
+
+/* 标签：细边框轻底色形态 */
+.el-tag {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* 分页器激活态用主色 */
+.el-pagination.is-background .el-pager li.is-active {
+  background-color: var(--pp-primary);
+  color: #fff;
+}
+
+/* 消息与通知圆角 */
+.el-message,
+.el-notification {
+  border-radius: var(--pp-radius-sm);
+}

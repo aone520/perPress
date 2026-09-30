@@ -14,7 +14,7 @@
 <template>
   <div class="page">
     <!-- 搜索工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
           <el-input
@@ -44,11 +44,11 @@
         </div>
         <el-button type="primary" :icon="Plus" @click="openWizard">新建压测任务</el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 任务列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column label="任务号" width="200">
           <template #default="{ row }">
             <span class="mono">{{ row.taskNo || row.id }}</span>
@@ -57,7 +57,7 @@
         <el-table-column prop="name" label="任务名称" min-width="150" show-overflow-tooltip />
         <el-table-column label="模式" width="110" align="center">
           <template #default="{ row }">
-            <el-tag effect="plain">{{ TASK_MODE_META[row.mode] || row.mode || '-' }}</el-tag>
+            <el-tag effect="plain" size="small">{{ TASK_MODE_META[row.mode] || row.mode || '-' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="执行方式" width="170" align="center">
@@ -85,7 +85,7 @@
         </el-table-column>
         <el-table-column label="状态" width="96" align="center">
           <template #default="{ row }">
-            <el-tag :type="TASK_STATUS_META[row.status]?.type || 'info'">
+            <el-tag :type="TASK_STATUS_META[row.status]?.type || 'info'" size="small">
               {{ TASK_STATUS_META[row.status]?.text || row.status }}
             </el-tag>
           </template>
@@ -185,7 +185,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 创建/编辑压测任务（单页单列布局：字段横排分区纵向排列，宽弹窗内滚） -->
     <el-dialog
@@ -470,7 +470,6 @@
           ref="nodeTableRef"
           v-loading="wizard.nodeLoading"
           :data="nodeRows"
-          border
           max-height="240"
           row-key="nodeKey"
           @selection-change="handleSelectionChange"
@@ -1419,9 +1418,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar-card {
-  margin-bottom: 12px;
-}
+/* 工具栏卡与列表卡的间距由全局 .page-card + .page-card 统一控制（16px），此处不再重复声明 */
 
 .toolbar {
   display: flex;
@@ -1455,7 +1452,7 @@ onMounted(load)
 }
 
 .mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 13px;
 }
 
@@ -1463,7 +1460,7 @@ onMounted(load)
 .schedule-time {
   margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .pagination-wrap {
@@ -1504,10 +1501,10 @@ onMounted(load)
 .pane-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
   margin: 16px 0 10px;
   padding-left: 8px;
-  border-left: 3px solid #409eff;
+  border-left: 3px solid var(--pp-primary);
 }
 
 .pane-title:first-child {
@@ -1522,7 +1519,7 @@ onMounted(load)
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
   margin: 16px 0 10px;
 }
 
@@ -1538,7 +1535,7 @@ onMounted(load)
 .unit-text {
   margin-left: 8px;
   font-size: 13px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .mode-alert {
@@ -1552,21 +1549,21 @@ onMounted(load)
   gap: 16px;
   flex-wrap: wrap;
   padding: 8px 12px;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
+  border: 1px solid var(--pp-border);
+  border-radius: var(--pp-radius-sm);
   margin-bottom: 8px;
 }
 
 .file-name {
   font-size: 13px;
-  color: #303133;
+  color: var(--pp-text-primary);
   font-weight: 500;
   word-break: break-all;
 }
 
 .split-hint-inline {
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--pp-warning);
 }
 
 /* 流量占比区：标题行左右布局（标题 + 均分按钮） */
@@ -1594,7 +1591,7 @@ onMounted(load)
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  color: #303133;
+  color: var(--pp-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1604,6 +1601,6 @@ onMounted(load)
 .weights-alloc {
   flex-shrink: 0;
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 </style>

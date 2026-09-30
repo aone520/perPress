@@ -1,76 +1,124 @@
 <!--
   脚本详情页（/scripts/:id）：
-  - 返回按钮 + 基本信息卡（名称/类型/描述/最新版本/创建人/创建时间）
-  - FORM 类型脚本展示表单摘要卡（线程组/思考时间 + 采样器表格：名称/方法/URL/断言数/参数文件引用数）
+  - 返回按钮 + 页头操作（FORM 脚本「编辑脚本」跳转全屏编辑页 /scripts/:id/edit，IMPORTED 脚本「新增版本」弹窗编辑 JMX）
+  - 基本信息卡（名称/类型/描述/最新版本/创建人/创建时间）
+  - FORM 类型展示表单摘要卡（全局配置：目标环境/自定义变量 + 线程组/思考时间 + 采样器表格）
   - 版本列表：版本/备注/关联文件（映射文件名）/创建时间/操作（查看 JMX 只读弹窗、下载 JMX）
-  - 「新增版本」对话框：FORM 脚本用 FormScriptEditor 表单编辑（预填当前 formDef），
-    IMPORTED 脚本保持 JMX 文本编辑（拉取最新版 JMX 填充），均支持备注与关联文件多选
 -->
 <template>
   <div class="page" v-loading="loading">
     <!-- 返回 + 页头操作 -->
-    <div class="page-head">
-      <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
-      <el-button type="primary" :icon="Plus" @click="openAddVersion">新增版本</el-button>
+    <div class="page-header">
+      <div class="page-header-left">
+        <span class="page-title">{{ script.name || '脚本详情' }}</span>
+        <el-tag v-if="script.type" size="small" effect="plain" :type="script.type === 'FORM' ? 'warning' : 'primary'">
+          {{ script.type === 'FORM' ? '表单' : '导入' }}
+        </el-tag>
+      </div>
+      <div class="page-header-actions">
+        <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
+        <el-button v-if="script.type === 'FORM'" type="primary" :icon="EditPen" @click="goEdit">
+          编辑脚本
+        </el-button>
+        <el-button v-else type="primary" :icon="Plus" @click="openAddVersion">新增版本</el-button>
+      </div>
     </div>
 
     <!-- 基本信息卡 -->
-    <el-card shadow="never" class="block-card">
-      <template #header><span class="card-title">基本信息</span></template>
+    <div class="page-card">
       <el-descriptions :column="3" border size="small">
         <el-descriptions-item label="名称">{{ script.name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="类型">
-          <el-tag :type="script.type === 'FORM' ? 'warning' : 'primary'" effect="plain">
-            {{ script.type === 'FORM' ? '表单' : '导入' }}
-          </el-tag>
-        </el-descriptions-item>
         <el-descriptions-item label="最新版本">v{{ script.latestVersion ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="描述" :span="2">{{ script.description || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建人">{{ script.createBy || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="描述" :span="2">{{ script.description || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDateTime(script.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间" :span="2">{{ formatDateTime(script.updateTime) }}</el-descriptions-item>
       </el-descriptions>
-    </el-card>
+    </div>
 
     <!-- 表单摘要卡（仅 FORM 类型展示） -->
-    <el-card v-if="script.type === 'FORM' && formDef" shadow="never" class="block-card">
-      <template #header><span class="card-title">表单场景定义</span></template>
+    <div v-if="script.type === 'FORM' && formDef" class="page-card">
+      <div class="summary-head">
+        <div>
+          <div class="card-title">表单场景定义</div>
+          <div class="card-desc">全局配置 + 线程组与接口编排（在编辑页修改，保存后生成新版本）</div>
+        </div>
+        <el-button link type="primary" :icon="EditPen" @click="goEdit">去编辑</el-button>
+      </div>
+
+      <!-- 全局配置摘要：目标环境 + 自定义变量 -->
       <el-descriptions :column="2" border size="small" class="form-brief">
-        <el-descriptions-item label="线程组名称">{{ formDef.threadGroupName || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="目标环境">
+          <span v-if="globalEnvText" class="mono">{{ globalEnvText }}</span>
+          <span v-else class="dim">未配置（接口使用完整地址）</span>
+        </el-descriptions-item>
         <el-descriptions-item label="思考时间">{{ formDef.thinkTimeMs || 0 }} ms</el-descriptions-item>
+        <el-descriptions-item label="线程组名称">{{ formDef.threadGroupName || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="自定义变量">
+          <span v-if="globalVariables.length" class="var-list">
+            <el-tag v-for="v in globalVariables" :key="v.name" size="small" effect="plain" class="var-tag mono">
+              {{ v.name }}={{ v.value }}
+            </el-tag>
+          </span>
+          <span v-else class="dim">无</span>
+        </el-descriptions-item>
       </el-descriptions>
-      <el-table :data="flattenRows" border stripe size="small">
+
+      <el-table :data="flattenRows" size="small">
         <el-table-column type="index" label="#" width="50" align="center" />
         <el-table-column label="所属分组" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="group-cell">
               {{ row.groupName }}
-              <el-tag size="small" :type="row.execution === 'PARALLEL' ? 'danger' : 'info'" effect="plain">
+              <el-tag size="small" :type="row.execution === 'PARALLEL' ? 'warning' : 'info'" effect="plain">
                 {{ row.execution === 'PARALLEL' ? '组内并行' : '组内串行' }}
               </el-tag>
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="method" label="方法" width="90" align="center">
+        <el-table-column label="方法" width="90" align="center">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.method }}</el-tag>
+            <span class="m-chip" :class="methodClass(row.method)">{{ row.method }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="url" label="URL" min-width="220" show-overflow-tooltip />
-        <el-table-column label="断言数" width="80" align="center">
-          <template #default="{ row }">{{ (row.assertions || []).length }}</template>
+        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="url" label="路径 / URL" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono">{{ row.url }}</span>
+          </template>
         </el-table-column>
-        <el-table-column label="参数文件引用数" width="120" align="center">
-          <template #default="{ row }">{{ (row.csvRefs || []).length }}</template>
+        <el-table-column label="提取" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="(row.extractors || []).length" size="small" effect="plain" type="success">
+              {{ (row.extractors || []).length }}
+            </el-tag>
+            <span v-else class="dim">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="断言" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="(row.assertions || []).length" size="small" effect="plain" type="warning">
+              {{ (row.assertions || []).length }}
+            </el-tag>
+            <span v-else class="dim">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="参数文件" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="(row.csvRefs || []).length" size="small" effect="plain" type="info">
+              {{ (row.csvRefs || []).length }}
+            </el-tag>
+            <span v-else class="dim">-</span>
+          </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </div>
 
     <!-- 版本列表 -->
-    <el-card shadow="never" class="block-card">
-      <template #header><span class="card-title">版本历史</span></template>
-      <el-table :data="versions" border stripe>
+    <div class="page-card">
+      <div class="summary-head">
+        <div class="card-title">版本历史</div>
+      </div>
+      <el-table :data="versions" size="small">
         <el-table-column label="版本" width="90" align="center">
           <template #default="{ row }">v{{ row.version }}</template>
         </el-table-column>
@@ -106,7 +154,7 @@
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </div>
 
     <!-- 查看JMX 对话框 -->
     <el-dialog v-model="viewDialog.visible" title="查看 JMX" width="860px" top="5vh">
@@ -118,45 +166,16 @@
       </template>
     </el-dialog>
 
-    <!-- 新增版本对话框：FORM 脚本走表单编辑（FormScriptEditor），IMPORTED 脚本走 JMX 文本编辑 -->
+    <!-- 新增版本对话框（仅 IMPORTED 脚本：编辑 JMX 文本） -->
     <el-dialog
       v-model="addDialog.visible"
       title="新增版本"
-      :width="script.type === 'FORM' ? '960px' : '860px'"
+      width="860px"
       top="5vh"
       destroy-on-close
       :close-on-click-modal="false"
     >
-      <!-- 表单方式：编辑表单场景定义生成新版本 -->
-      <template v-if="script.type === 'FORM'">
-        <div class="section-title">表单场景定义（已预填当前定义，修改后提交为新版本）</div>
-        <FormScriptEditor v-model="addDialog.formDef" :file-options="fileOptions" />
-        <el-form label-width="90px" class="version-extra-form">
-          <el-form-item label="备注">
-            <el-input v-model="addDialog.remark" placeholder="版本备注（可选）" maxlength="100" clearable />
-          </el-form-item>
-          <el-form-item label="关联文件">
-            <el-select
-              v-model="addDialog.fileIds"
-              placeholder="选择本版本依赖的参数/数据文件（可选）"
-              multiple
-              clearable
-              filterable
-              class="w-full"
-            >
-              <el-option
-                v-for="item in fileOptions"
-                :key="item.id"
-                :label="`${item.name}（${item.fileType}）`"
-                :value="item.id"
-              />
-            </el-select>
-          </el-form-item>
-        </el-form>
-      </template>
-
-      <!-- 导入方式：编辑 JMX 文本 -->
-      <el-form v-else label-width="90px">
+      <el-form label-width="90px">
         <el-form-item label="JMX 内容" required>
           <div v-loading="addDialog.loading" class="w-full">
             <el-input
@@ -202,7 +221,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Plus } from '@element-plus/icons-vue'
+import { ArrowLeft, EditPen, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import {
   detail as getScriptDetail,
@@ -212,7 +231,6 @@ import {
 } from '@/api/script'
 import { page as pageFiles } from '@/api/file'
 import { formatDateTime } from '@/utils/format'
-import FormScriptEditor, { sanitizeFormDef, validateFormDef } from '@/components/FormScriptEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -233,19 +251,33 @@ const viewDialog = reactive({
   content: ''
 })
 
-/** 新增版本对话框状态（FORM 脚本用 formDef，IMPORTED 脚本用 jmxContent） */
+/** 新增版本对话框状态（仅 IMPORTED 脚本使用 JMX 文本编辑） */
 const addDialog = reactive({
   visible: false,
   loading: false,
   submitting: false,
   jmxContent: '',
   remark: '',
-  fileIds: [],
-  formDef: null
+  fileIds: []
 })
 
 /** 当前脚本的 formDef（仅 FORM 类型存在） */
 const formDef = computed(() => script.value.formDef || null)
+
+/** 全局目标环境预览（协议://域名[:端口]，未配置返回空串） */
+const globalEnvText = computed(() => {
+  const config = formDef.value?.config
+  if (!config || !config.host) {
+    return ''
+  }
+  const port = config.port ? ':' + config.port : ''
+  return `${config.protocol || 'http'}://${config.host}${port}`
+})
+
+/** 全局自定义变量列表（过滤空名行） */
+const globalVariables = computed(() =>
+  (formDef.value?.config?.variables || []).filter((v) => v?.name)
+)
 
 /**
  * 表单摘要行：按分组顺序平铺采样器并附带分组名与执行方式，
@@ -270,6 +302,28 @@ const flattenRows = computed(() => {
 
 /** 当前脚本的版本列表 */
 const versions = computed(() => script.value.versions || [])
+
+/**
+ * 方法徽标样式类（GET 绿 / POST 蓝 / PUT 橙 / DELETE 红）
+ * @param {string} method HTTP 方法
+ * @returns {string} 样式类名
+ */
+function methodClass(method) {
+  const m = (method || 'GET').toUpperCase()
+  if (m === 'GET') {
+    return 'm-get'
+  }
+  if (m === 'POST') {
+    return 'm-post'
+  }
+  if (m === 'PUT' || m === 'PATCH') {
+    return 'm-put'
+  }
+  if (m === 'DELETE') {
+    return 'm-delete'
+  }
+  return 'm-other'
+}
 
 /**
  * 解析 fileIds 字符串（形如 "1,2"）为文件名数组：能映射到文件名则显示名称，否则显示占位
@@ -317,6 +371,13 @@ function goBack() {
 }
 
 /**
+ * 跳转全屏脚本编辑页（保存后生成新版本）
+ */
+function goEdit() {
+  router.push(`/scripts/${route.params.id}/edit`)
+}
+
+/**
  * 打开查看JMX 对话框：拉取指定版本 JMX 文本只读展示
  * @param {Object} row 版本行数据
  */
@@ -346,8 +407,7 @@ async function handleDownloadJmx(row) {
 }
 
 /**
- * 打开新增版本对话框：重置表单并预填最新版本关联文件；
- * FORM 脚本预填当前表单定义（深拷贝），IMPORTED 脚本拉取最新版本 JMX 文本填充编辑区
+ * 打开新增版本对话框（仅 IMPORTED）：预填最新版本关联文件与 JMX 文本
  */
 async function openAddVersion() {
   Object.assign(addDialog, {
@@ -356,8 +416,7 @@ async function openAddVersion() {
     submitting: false,
     jmxContent: '',
     remark: '',
-    fileIds: [],
-    formDef: null
+    fileIds: []
   })
   // 预填当前最新版本已关联的文件
   const latest = versions.value.reduce(
@@ -369,13 +428,6 @@ async function openAddVersion() {
       .split(',')
       .map((part) => Number(part.trim()))
       .filter((id) => Number.isFinite(id) && id > 0)
-  }
-  // 表单脚本：深拷贝当前 formDef 作为新版本编辑起点
-  if (script.value.type === 'FORM') {
-    addDialog.formDef = script.value.formDef
-      ? JSON.parse(JSON.stringify(script.value.formDef))
-      : {}
-    return
   }
   // 导入脚本：拉取最新版本 JMX 文本填充
   addDialog.loading = true
@@ -391,37 +443,20 @@ async function openAddVersion() {
 }
 
 /**
- * 提交新增版本：FORM 脚本校验并清洗表单定义后提交 formDef，
- * IMPORTED 脚本校验 JMX 内容非空后提交 jmxContent，成功后关闭并刷新详情
+ * 提交新增版本（仅 IMPORTED）：校验 JMX 内容非空后提交，成功后关闭并刷新详情
  */
 async function submitAddVersion() {
-  const isForm = script.value.type === 'FORM'
-  let body
-  if (isForm) {
-    const invalid = validateFormDef(addDialog.formDef)
-    if (invalid) {
-      ElMessage.warning(invalid)
-      return
-    }
-    body = {
-      formDef: sanitizeFormDef(addDialog.formDef),
-      remark: addDialog.remark.trim(),
-      fileIds: addDialog.fileIds.length ? addDialog.fileIds.join(',') : ''
-    }
-  } else {
-    if (!addDialog.jmxContent.trim()) {
-      ElMessage.warning('JMX 内容不能为空')
-      return
-    }
-    body = {
-      jmxContent: addDialog.jmxContent,
-      remark: addDialog.remark.trim(),
-      fileIds: addDialog.fileIds.length ? addDialog.fileIds.join(',') : ''
-    }
+  if (!addDialog.jmxContent.trim()) {
+    ElMessage.warning('JMX 内容不能为空')
+    return
   }
   addDialog.submitting = true
   try {
-    await addVersion(route.params.id, body)
+    await addVersion(route.params.id, {
+      jmxContent: addDialog.jmxContent,
+      remark: addDialog.remark.trim(),
+      fileIds: addDialog.fileIds.length ? addDialog.fileIds.join(',') : ''
+    })
     addDialog.visible = false
     ElMessage.success('新版本已创建')
     await load()
@@ -437,26 +472,68 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-head {
+.page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
-
-.block-card {
-  margin-bottom: 12px;
+.page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
-
-.card-title {
-  font-size: 14px;
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.page-title {
+  font-size: 18px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .form-brief {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
+
+.var-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.var-tag {
+  margin: 0;
+}
+
+/* 方法徽标（与编辑页一致） */
+.m-chip {
+  font-family: var(--pp-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.m-get { background-color: var(--el-color-success-light-9); color: var(--pp-success); }
+.m-post { background-color: var(--el-color-primary-light-9); color: var(--pp-primary); }
+.m-put { background-color: var(--el-color-warning-light-9); color: var(--pp-warning); }
+.m-delete { background-color: var(--el-color-danger-light-9); color: var(--pp-danger); }
+.m-other { background-color: var(--pp-bg); color: var(--pp-text-secondary); }
 
 /* 表单摘要表格：分组名与执行方式标签同行展示 */
 .group-cell {
@@ -465,17 +542,8 @@ onMounted(load)
   gap: 6px;
 }
 
-/* 新增版本对话框：表单定义区标题 */
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin: 0 0 10px;
-}
-
-/* 新增版本对话框：表单定义下方的备注/关联文件表单 */
-.version-extra-form {
-  margin-top: 12px;
+.dim {
+  color: var(--pp-text-placeholder);
 }
 
 .file-tag {
@@ -490,23 +558,24 @@ onMounted(load)
 .jmx-viewer {
   max-height: 60vh;
   overflow: auto;
-  background: #f5f7fa;
-  border-radius: 4px;
+  background: var(--pp-bg);
+  border: 1px solid var(--pp-border);
+  border-radius: 8px;
   padding: 12px;
 }
 
 .jmx-viewer pre {
   margin: 0;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 12px;
   line-height: 1.6;
-  color: #303133;
+  color: var(--pp-text-primary);
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .mono :deep(textarea) {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 12px;
 }
 </style>

@@ -1,53 +1,53 @@
 <!--
   脚本中心列表页：
-  - 关键字搜索 + 分页查询脚本列表（名称链接跳详情、类型/版本/描述/创建时间、删除二次确认）
+  - 关键字搜索 + 分页查询脚本列表（名称链接跳详情、类型/版本/描述/创建时间、复制/删除二次确认）
   - 「导入 JMX」对话框：拖拽上传 .jmx 文件 + 名称/描述/关联参数文件，multipart 提交
-  - 「表单创建」对话框：名称/描述 + 公共组件 FormScriptEditor 编辑表单定义
-    （线程组/思考时间/采样器卡片/headers/断言/参数文件引用，含忽略首行开关），提交由服务端生成 JMX
+  - 「表单创建」跳转全屏编辑页 /scripts/new（独立编辑页承载表单定义编辑）
   - 「文件库」按钮跳转 /files 管理参数文件
 -->
 <template>
   <div class="page">
     <!-- 搜索工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
           <el-input
             v-model="query.keyword"
-            placeholder="脚本名称"
+            placeholder="搜索脚本名称"
             clearable
-            class="w-220"
+            :prefix-icon="Search"
+            class="w-240"
             @keyup.enter="handleSearch"
             @clear="handleSearch"
           />
-          <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
-          <el-button :icon="RefreshLeft" @click="handleReset">重置</el-button>
         </div>
         <div class="toolbar-right">
           <el-button type="primary" :icon="Upload" @click="openImportDialog">导入 JMX</el-button>
-          <el-button :icon="EditPen" @click="openFormDialog">表单创建</el-button>
+          <el-button :icon="EditPen" @click="router.push('/scripts/new')">表单创建</el-button>
           <el-button :icon="FolderOpened" @click="router.push('/files')">文件库</el-button>
         </div>
       </div>
-    </el-card>
+    </div>
 
     <!-- 脚本列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
-        <el-table-column label="名称" min-width="180" show-overflow-tooltip>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
+        <el-table-column label="名称" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-link type="primary" @click="goDetail(row)">{{ row.name }}</el-link>
+            <el-link type="primary" :underline="false" @click="goDetail(row)">{{ row.name }}</el-link>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="110" align="center">
+        <el-table-column label="类型" width="96" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.type === 'FORM' ? 'warning' : 'primary'" effect="plain">
+            <el-tag :type="row.type === 'FORM' ? 'warning' : 'primary'" effect="plain" size="small">
               {{ row.type === 'FORM' ? '表单' : '导入' }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="最新版本" width="96" align="center">
-          <template #default="{ row }">v{{ row.latestVersion ?? '-' }}</template>
+          <template #default="{ row }">
+            <span class="mono">v{{ row.latestVersion ?? '-' }}</span>
+          </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">{{ row.description || '-' }}</template>
@@ -55,8 +55,9 @@
         <el-table-column label="创建时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="185" fixed="right" align="center">
+        <el-table-column label="操作" width="190" fixed="right" align="center">
           <template #default="{ row }">
+            <el-button v-if="row.type === 'FORM'" link type="primary" @click="goEdit(row)">编辑</el-button>
             <el-button link type="primary" @click="goDetail(row)">详情</el-button>
             <el-button link type="primary" @click="handleCopy(row)">复制</el-button>
             <el-button link type="danger" @click="handleRemove(row)">删除</el-button>
@@ -76,7 +77,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 导入 JMX 对话框 -->
     <el-dialog
@@ -139,54 +140,17 @@
         </el-button>
       </template>
     </el-dialog>
-
-    <!-- 表单创建对话框（表单定义编辑器使用公共组件 FormScriptEditor） -->
-    <el-dialog
-      v-model="formDialog.visible"
-      title="表单创建脚本"
-      width="960px"
-      top="4vh"
-      destroy-on-close
-      :close-on-click-modal="false"
-    >
-      <!-- 基本信息（名称/描述属于脚本元信息，表单定义由组件维护） -->
-      <el-form label-width="90px">
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="名称" required>
-              <el-input v-model="formDialog.name" placeholder="请输入脚本名称" maxlength="64" clearable />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="描述">
-              <el-input v-model="formDialog.description" placeholder="脚本描述（可选）" maxlength="200" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-      </el-form>
-
-      <!-- 表单定义编辑器（线程组/思考时间/采样器卡片，内部含忽略首行开关） -->
-      <FormScriptEditor v-model="formDialog.formDef" :file-options="fileOptions" />
-
-      <template #footer>
-        <el-button @click="formDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="formDialog.submitting" @click="submitForm">
-          创建
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, RefreshLeft, Upload, EditPen, FolderOpened, UploadFilled } from '@element-plus/icons-vue'
+import { Search, Upload, EditPen, FolderOpened, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { page as pageScripts, importScript, createForm, removeScript, copyScript } from '@/api/script'
+import { page as pageScripts, importScript, removeScript, copyScript } from '@/api/script'
 import { page as pageFiles } from '@/api/file'
 import { formatDateTime } from '@/utils/format'
-import FormScriptEditor, { sanitizeFormDef, validateFormDef } from '@/components/FormScriptEditor.vue'
 
 const router = useRouter()
 
@@ -217,15 +181,6 @@ const importDialog = reactive({
   fileIds: []
 })
 
-/** 表单创建对话框状态（formDef 由 FormScriptEditor 组件通过 v-model 维护） */
-const formDialog = reactive({
-  visible: false,
-  submitting: false,
-  name: '',
-  description: '',
-  formDef: null
-})
-
 /**
  * 加载脚本列表：根据搜索条件与分页参数请求后端
  */
@@ -247,18 +202,9 @@ async function load() {
 }
 
 /**
- * 查询按钮：重置到第一页并重新加载
+ * 搜索框回车/清空：重置到第一页并重新加载
  */
 function handleSearch() {
-  page.value = 1
-  load()
-}
-
-/**
- * 重置按钮：清空搜索条件并回到第一页重新加载
- */
-function handleReset() {
-  query.keyword = ''
   page.value = 1
   load()
 }
@@ -292,8 +238,15 @@ function goDetail(row) {
 }
 
 /**
+ * 跳转全屏脚本编辑页（保存后生成新版本）
+ * @param {Object} row 脚本行数据
+ */
+function goEdit(row) {
+  router.push(`/scripts/${row.id}/edit`)
+}
+
+/**
  * 一键复制脚本：直接调用复制接口（连同全部版本），成功后提示新脚本名并回到第一页刷新
- * （新脚本 id 最大，列表按 id 倒序会排在最前）
  * @param {Object} row 脚本行数据
  */
 async function handleCopy(row) {
@@ -348,7 +301,6 @@ function openImportDialog() {
 /**
  * 导入对话框上传文件变化回调：手动暂存原生 File 对象
  * @param {Object} uploadFile el-upload 文件对象
- * @param {Array} uploadFiles 当前文件列表
  */
 function handleImportFileChange(uploadFile) {
   importDialog.file = uploadFile.raw || null
@@ -387,58 +339,13 @@ async function submitImport() {
   }
 }
 
-/**
- * 打开表单创建对话框：重置表单（组件内部会预置一个空采样器）、加载文件下拉选项
- */
-function openFormDialog() {
-  Object.assign(formDialog, {
-    visible: true,
-    submitting: false,
-    name: '',
-    description: '',
-    formDef: { threadGroupName: '', thinkTimeMs: 0, samplers: [] }
-  })
-  loadFileOptions()
-}
-
-/**
- * 组装并提交表单创建：校验表单定义后清洗 formDef 调用创建接口
- */
-async function submitForm() {
-  if (!formDialog.name.trim()) {
-    ElMessage.warning('请输入脚本名称')
-    return
-  }
-  const invalid = validateFormDef(formDialog.formDef)
-  if (invalid) {
-    ElMessage.warning(invalid)
-    return
-  }
-  formDialog.submitting = true
-  try {
-    await createForm({
-      name: formDialog.name.trim(),
-      description: formDialog.description.trim(),
-      formDef: sanitizeFormDef(formDialog.formDef)
-    })
-    formDialog.visible = false
-    ElMessage.success('脚本创建成功')
-    page.value = 1
-    await load()
-  } catch {
-    // 错误提示已由 http.js 拦截器统一弹出
-  } finally {
-    formDialog.submitting = false
-  }
-}
-
 // 页面挂载后自动加载脚本列表
 onMounted(load)
 </script>
 
 <style scoped>
 .toolbar-card {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .toolbar {
@@ -457,8 +364,8 @@ onMounted(load)
   flex-wrap: wrap;
 }
 
-.w-220 {
-  width: 220px;
+.w-240 {
+  width: 240px;
 }
 
 .w-full {

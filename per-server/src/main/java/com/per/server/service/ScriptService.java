@@ -381,6 +381,39 @@ public class ScriptService {
                 }
             }
         }
+        validateGlobalConfig(formDef.getConfig());
+    }
+
+    /**
+     * 校验全局配置：协议枚举、变量名非空且不重复（重复定义会互相覆盖）
+     *
+     * @param config 全局配置（可空）
+     */
+    private void validateGlobalConfig(ScriptFormRequest.Config config) {
+        if (config == null) {
+            return;
+        }
+        if (StringUtils.hasText(config.getProtocol())
+                && !"http".equalsIgnoreCase(config.getProtocol())
+                && !"https".equalsIgnoreCase(config.getProtocol())) {
+            throw new BizException("全局协议仅支持 http/https：" + config.getProtocol());
+        }
+        if (config.getVariables() == null) {
+            return;
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (ScriptFormRequest.Variable variable : config.getVariables()) {
+            if (variable == null || !StringUtils.hasText(variable.getName())) {
+                continue;
+            }
+            String name = variable.getName().trim();
+            if (!name.matches("[A-Za-z0-9_]+")) {
+                throw new BizException("变量名仅支持字母/数字/下划线：" + name);
+            }
+            if (!seen.add(name)) {
+                throw new BizException("变量名重复定义：" + name);
+            }
+        }
     }
 
     /**

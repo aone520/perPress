@@ -1,0 +1,48 @@
+/**
+ * 设计令牌：PerPress 全局设计变量（极简冷淡浅色系）
+ * 主色 Linear 靛蓝 + 近白底 + 细边框 + 三级文字灰阶；
+ * 所有页面/组件统一引用本文件变量，禁止再硬编码色值
+ */
+:root {
+  /* ===== 品牌色 ===== */
+  --pp-primary: #5e6ad2;
+  --pp-primary-hover: #6e79dc;
+  --pp-primary-active: #4f5ac0;
+
+  /* ===== 功能色（低饱和，久看不刺眼） ===== */
+  --pp-success: #3b9e6e;
+  --pp-warning: #d79a2e;
+  --pp-danger: #d2554f;
+  --pp-info: #667085;
+
+  /* ===== 中性色 ===== */
+  --pp-bg: #f7f8fa;             /* 页面底色 */
+  --pp-surface: #ffffff;        /* 卡片面 */
+  --pp-surface-2: #fbfbfd;      /* 次级面（表头/嵌入块） */
+  --pp-border: #e9ebf0;         /* 常规边框 */
+  --pp-border-strong: #dde0e6;  /* 强边框 */
+
+  /* ===== 文字灰阶 ===== */
+  --pp-text-primary: #1a1d24;   /* 标题/重点 */
+  --pp-text-regular: #4a5060;   /* 正文 */
+  --pp-text-secondary: #7a8194; /* 辅助说明 */
+  --pp-text-placeholder: #a3a9b8;
+
+  /* ===== 侧边栏（近黑蓝，压住版面） ===== */
+  --pp-aside-bg: #101116;
+  --pp-aside-hover: #1c1e26;
+  --pp-aside-text: #8b90a0;
+  --pp-aside-active-bg: rgba(94, 106, 210, 0.24);
+  --pp-aside-active-text: #ffffff;
+
+  /* ===== 圆角与阴影（克制，层次靠留白不靠重影） ===== */
+  --pp-radius: 10px;
+  --pp-radius-sm: 8px;
+  --pp-shadow: 0 1px 2px rgba(16, 17, 22, 0.04);
+  --pp-shadow-md: 0 4px 14px rgba(16, 17, 22, 0.07);
+
+  /* ===== 字体 ===== */
+  --pp-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+  --pp-font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}

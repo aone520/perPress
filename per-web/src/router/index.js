@@ -14,6 +14,7 @@ import UserListView from '@/views/user/UserListView.vue'
 import AuditLogView from '@/views/audit/AuditLogView.vue'
 import ScriptListView from '@/views/script/ScriptListView.vue'
 import ScriptDetailView from '@/views/script/ScriptDetailView.vue'
+import ScriptEditPage from '@/views/script/ScriptEditPage.vue'
 import FileListView from '@/views/file/FileListView.vue'
 import EngineListView from '@/views/engine/EngineListView.vue'
 import TaskListView from '@/views/task/TaskListView.vue'
@@ -52,10 +53,24 @@ const routes = [
         meta: { title: '脚本中心' }
       },
       {
+        // 新建脚本（全屏编辑页）：需在 /scripts/:id 之前注册，避免 new 被当作 id
+        path: 'scripts/new',
+        name: 'ScriptCreate',
+        component: ScriptEditPage,
+        meta: { title: '新建脚本' }
+      },
+      {
         path: 'scripts/:id',
         name: 'ScriptDetail',
         component: ScriptDetailView,
         meta: { title: '脚本详情' }
+      },
+      {
+        // 编辑脚本（保存为新版本，全屏编辑页）
+        path: 'scripts/:id/edit',
+        name: 'ScriptEdit',
+        component: ScriptEditPage,
+        meta: { title: '编辑脚本' }
       },
       {
         path: 'files',

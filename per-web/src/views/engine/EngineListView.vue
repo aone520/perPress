@@ -16,17 +16,17 @@
       title="上传 JMeter 官方发行包 zip（如 apache-jmeter-5.6.3.zip）并发布即可——平台的并发/固定TPS/阶梯三种压测模式全部基于 JMeter 官方自带元件实现，无需任何插件；发布后 Agent 将在心跳周期内自动下载部署，全节点版本一致"
     />
 
-    <!-- 工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <!-- 工具栏（page-card 全局卡片类：白底/细边框/圆角/淡阴影） -->
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <span class="toolbar-title">引擎包列表（{{ rows.length }}）</span>
         <el-button type="primary" :icon="Upload" @click="openUploadDialog">上传引擎包</el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 引擎包列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column label="版本" width="150">
           <template #default="{ row }">
             <span class="mono">{{ row.version }}</span>
@@ -46,8 +46,8 @@
         </el-table-column>
         <el-table-column label="当前发布" width="100" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.isCurrent === 1" type="success">发布中</el-tag>
-            <el-tag v-else type="info" effect="plain">未发布</el-tag>
+            <el-tag v-if="row.isCurrent === 1" type="success" size="small">发布中</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">未发布</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip>
@@ -70,7 +70,7 @@
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </div>
 
     <!-- 上传引擎包对话框 -->
     <el-dialog
@@ -230,9 +230,7 @@ onMounted(load)
   margin-bottom: 12px;
 }
 
-.toolbar-card {
-  margin-bottom: 12px;
-}
+/* 工具栏卡片与列表卡片间距由全局 .page-card + .page-card 统一控制（16px），此处不再重复声明 */
 
 .toolbar {
   display: flex;
@@ -245,19 +243,16 @@ onMounted(load)
 .toolbar-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
-.mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 13px;
-}
+/* mono 等宽类已由全局 base.css 提供 */
 
 .md5-cell {
   cursor: default;
 }
 
 .current-text {
-  color: #c0c4cc;
+  color: var(--pp-text-placeholder);
 }
 </style>

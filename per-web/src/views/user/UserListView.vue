@@ -7,14 +7,15 @@
 -->
 <template>
   <div class="page">
-    <!-- 搜索工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <!-- 搜索工具栏（page-card 全局卡片类：白底/细边框/圆角/淡阴影） -->
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
           <el-input
             v-model="query.keyword"
             placeholder="用户名关键字"
             clearable
+            :prefix-icon="Search"
             class="w-220"
             @keyup.enter="handleSearch"
             @clear="handleSearch"
@@ -24,18 +25,18 @@
         </div>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 用户列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column prop="username" label="用户名" min-width="140" />
         <el-table-column label="昵称" min-width="140">
           <template #default="{ row }">{{ row.nickname || '-' }}</template>
         </el-table-column>
         <el-table-column label="角色" width="100" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.role === 'ADMIN' ? 'danger' : 'primary'">
+            <el-tag size="small" :type="row.role === 'ADMIN' ? 'danger' : 'primary'">
               {{ row.role === 'ADMIN' ? '管理员' : '普通用户' }}
             </el-tag>
           </template>
@@ -73,7 +74,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 新建 / 编辑用户对话框 -->
     <el-dialog
@@ -293,8 +294,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 工具栏卡片与列表卡片间距（与其它列表页一致） */
 .toolbar-card {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .toolbar {

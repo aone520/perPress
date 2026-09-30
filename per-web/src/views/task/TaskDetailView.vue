@@ -17,58 +17,56 @@
     <div v-loading="loading" class="detail-wrap">
       <template v-if="task">
         <!-- 任务信息卡 -->
-        <el-card shadow="never" class="info-card">
-          <template #header>
-            <div class="card-header">
-              <span class="card-title">任务信息</span>
-              <div>
-                <el-button
-                  v-if="task.status === 'RUNNING'"
-                  type="warning"
-                  :icon="DataLine"
-                  @click="goMonitor"
-                >
-                  监控大屏
-                </el-button>
-                <el-button
-                  v-if="task.status === 'FINISHED'"
-                  type="primary"
-                  :icon="TrendCharts"
-                  @click="goReport"
-                >
-                  查看报告
-                </el-button>
-                <el-button
-                  v-if="task.status === 'CREATED' && task.triggerType !== 'SCHEDULED'"
-                  type="success"
-                  :loading="actionLoading"
-                  :icon="VideoPlay"
-                  @click="handleStart"
-                >
-                  启动任务
-                </el-button>
-                <!-- 定时任务（CREATED 且 SCHEDULED）：平台按定时时间自动触发，此处可覆盖定时立即执行 -->
-                <el-button
-                  v-if="task.status === 'CREATED' && task.triggerType === 'SCHEDULED'"
-                  type="warning"
-                  :loading="actionLoading"
-                  :icon="VideoPlay"
-                  @click="handleStart"
-                >
-                  改为立即执行
-                </el-button>
-                <el-button
-                  v-if="['RUNNING', 'PREPARING'].includes(task.status)"
-                  type="danger"
-                  :loading="actionLoading"
-                  :icon="VideoPause"
-                  @click="handleStop"
-                >
-                  停止任务
-                </el-button>
-              </div>
+        <div class="page-card">
+          <div class="card-header">
+            <div class="card-title">任务信息</div>
+            <div>
+              <el-button
+                v-if="task.status === 'RUNNING'"
+                type="warning"
+                :icon="DataLine"
+                @click="goMonitor"
+              >
+                监控大屏
+              </el-button>
+              <el-button
+                v-if="task.status === 'FINISHED'"
+                type="primary"
+                :icon="TrendCharts"
+                @click="goReport"
+              >
+                查看报告
+              </el-button>
+              <el-button
+                v-if="task.status === 'CREATED' && task.triggerType !== 'SCHEDULED'"
+                type="success"
+                :loading="actionLoading"
+                :icon="VideoPlay"
+                @click="handleStart"
+              >
+                启动任务
+              </el-button>
+              <!-- 定时任务（CREATED 且 SCHEDULED）：平台按定时时间自动触发，此处可覆盖定时立即执行 -->
+              <el-button
+                v-if="task.status === 'CREATED' && task.triggerType === 'SCHEDULED'"
+                type="warning"
+                :loading="actionLoading"
+                :icon="VideoPlay"
+                @click="handleStart"
+              >
+                改为立即执行
+              </el-button>
+              <el-button
+                v-if="['RUNNING', 'PREPARING'].includes(task.status)"
+                type="danger"
+                :loading="actionLoading"
+                :icon="VideoPause"
+                @click="handleStop"
+              >
+                停止任务
+              </el-button>
             </div>
-          </template>
+          </div>
           <!-- ① 基本信息（对齐创建向导步骤1） -->
           <div class="section-title">基本信息</div>
           <el-descriptions :column="3" border size="small">
@@ -138,7 +136,7 @@
           <!-- ③ 流量占比（多执行单元任务的占比分配，独立分块对齐创建向导的占比配置区） -->
           <template v-if="weightRows.length">
             <div class="section-title">流量占比</div>
-            <el-table :data="weightRows" border size="small" class="dispatch-table">
+            <el-table :data="weightRows" size="small" class="dispatch-table">
               <el-table-column prop="index" label="#" width="50" align="center" />
               <el-table-column prop="name" label="执行单元" min-width="220" show-overflow-tooltip />
               <el-table-column prop="type" label="类型" width="110" align="center">
@@ -175,7 +173,6 @@
           <el-table
             v-if="fileDispatchRows.length"
             :data="fileDispatchRows"
-            border
             size="small"
             class="dispatch-table"
           >
@@ -194,14 +191,12 @@
             </el-table-column>
           </el-table>
           <span v-else class="muted">未关联参数文件，无需分发</span>
-        </el-card>
+        </div>
 
         <!-- 节点执行明细 -->
-        <el-card shadow="never">
-          <template #header>
-            <span class="card-title">节点执行明细（{{ nodes.length }}）</span>
-          </template>
-          <el-table :data="nodes" border stripe>
+        <div class="page-card">
+          <div class="card-title">节点执行明细（{{ nodes.length }}）</div>
+          <el-table :data="nodes">
             <el-table-column label="节点" min-width="170">
               <template #default="{ row }">
                 <!-- 优先显示主机名（IP 副行），节点已被删除等场景回退 nodeKey 缩略 -->
@@ -250,7 +245,7 @@
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
+        </div>
       </template>
       <el-empty v-else-if="!loading" description="任务不存在或已被删除" />
     </div>
@@ -610,7 +605,7 @@ onUnmounted(stopPolling)
 .page-title {
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
 .detail-wrap {
@@ -631,11 +626,11 @@ onUnmounted(stopPolling)
 .card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
 }
 
 .mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: var(--pp-font-mono);
   font-size: 13px;
 }
 
@@ -652,7 +647,7 @@ onUnmounted(stopPolling)
 
 .node-ip {
   font-size: 12px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 /* READY 状态的青色 tag：覆盖 Element Plus 主题变量 */
@@ -664,7 +659,7 @@ onUnmounted(stopPolling)
 
 .error-text {
   display: block;
-  color: #f56c6c;
+  color: var(--pp-danger);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -674,7 +669,7 @@ onUnmounted(stopPolling)
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--pp-text-primary);
   margin: 18px 0 10px;
 }
 
@@ -694,13 +689,13 @@ onUnmounted(stopPolling)
 
 /* 弱化占位文案 */
 .muted {
-  color: #909399;
+  color: var(--pp-text-secondary);
   font-size: 13px;
 }
 
 /* 占比数值强调 */
 .weight-num {
   font-weight: 600;
-  color: #409eff;
+  color: var(--pp-primary);
 }
 </style>

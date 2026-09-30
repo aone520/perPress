@@ -68,7 +68,7 @@ public class FormScriptJmxBuilder {
         jmx.append("<jmeterTestPlan version=\"1.2\" properties=\"5.0\" jmeter=\"5.6.3\">\n");
         jmx.append("  <hashTree>\n");
         // 标准结构：根 hashTree → TestPlan → 其子 hashTree → ThreadGroup → 线程组子 hashTree（缺 TestPlan 会报 Could not find the TestPlan class）
-        appendTestPlan(jmx);
+        appendTestPlan(jmx, def);
         jmx.append("    <hashTree>\n");
         switch (targetMode) {
             case "FIXED_TPS" -> {
@@ -82,7 +82,7 @@ public class FormScriptJmxBuilder {
                 jmx.append("      <hashTree>\n");
                 // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发
                 appendConstantThroughputTimer(jmx, "tg0", (long) tps * 60 / (double) threads);
-                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames);
+                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def);
                 jmx.append("      </hashTree>\n");
             }
             case "STEPPED" -> appendSteppedGroups(jmx, legacyDef, samplers, fileNames, config);
@@ -92,7 +92,7 @@ public class FormScriptJmxBuilder {
                 int duration = config != null && config.getDurationSeconds() != null ? config.getDurationSeconds() : 300;
                 appendConcurrentThreadGroup(jmx, legacyDef, threads, rampup, duration);
                 jmx.append("      <hashTree>\n");
-                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames);
+                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def);
                 jmx.append("      </hashTree>\n");
             }
         }
@@ -125,7 +125,7 @@ public class FormScriptJmxBuilder {
         jmx.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         jmx.append("<jmeterTestPlan version=\"1.2\" properties=\"5.0\" jmeter=\"5.6.3\">\n");
         jmx.append("  <hashTree>\n");
-        appendTestPlan(jmx);
+        appendTestPlan(jmx, def);
         jmx.append("    <hashTree>\n");
         switch (mode) {
             case "FIXED_TPS" -> {
@@ -144,7 +144,7 @@ public class FormScriptJmxBuilder {
                     jmx.append("      <hashTree>\n");
                     // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发（底线：TPS 压测不得超过配置值）
                     appendConstantThroughputTimer(jmx, prefix, unitTpsPerMin[u] / (double) threads);
-                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs());
+                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
                     jmx.append("      </hashTree>\n");
                 }
             }
@@ -170,7 +170,7 @@ public class FormScriptJmxBuilder {
                             // TPS 阶梯段用 CTT（每线程独立限速）：无 PTT 延迟段补发爆发，各段互不干扰
                             appendConstantThroughputTimer(jmx, prefix, (long) value * 60 / (double) threads);
                         }
-                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs());
+                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
                         jmx.append("      </hashTree>\n");
                     }
                 }
@@ -185,7 +185,7 @@ public class FormScriptJmxBuilder {
                     appendNamedPropertyThreadGroup(jmx, unitDisplayName(units.get(u), prefix), prefix,
                             Math.max(1, unitThreads[u]), rampup, 0, duration);
                     jmx.append("      <hashTree>\n");
-                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs());
+                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def);
                     jmx.append("      </hashTree>\n");
                 }
             }
@@ -269,11 +269,12 @@ public class FormScriptJmxBuilder {
      * @param unit        执行单元
      * @param fileNames   CSV 引用的文件ID → 原始文件名映射
      * @param thinkTimeMs 思考时间（毫秒）
+     * @param def         表单场景定义（取全局配置用于相对路径补全）
      */
     private void appendUnitSamplers(StringBuilder jmx, ExecUnit unit,
-                                    Map<Long, String> fileNames, Long thinkTimeMs) {
+                                    Map<Long, String> fileNames, Long thinkTimeMs, ScriptFormRequest.FormDef def) {
         for (ScriptFormRequest.Sampler sampler : unit.samplers()) {
-            appendSampler(jmx, sampler, fileNames);
+            appendSampler(jmx, sampler, fileNames, globalConfig(def));
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
@@ -308,7 +309,7 @@ public class FormScriptJmxBuilder {
                 // TPS 阶梯段用 CTT：每线程独立限速（组吞吐÷组线程数），无补发爆发、各段独立叠加
                 appendConstantThroughputTimer(jmx, "tg" + i, (long) segment.getValue() * 60 / (double) threads);
             }
-            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames);
+            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames, def);
             jmx.append("      </hashTree>\n");
         }
     }
@@ -427,21 +428,36 @@ public class FormScriptJmxBuilder {
      * @param samplers    采样器列表
      * @param thinkTimeMs 思考时间（毫秒）
      * @param fileNames   CSV 引用的文件ID → 原始文件名映射
+     * @param def         表单场景定义（取全局配置用于相对路径补全）
      */
     private void appendSamplers(StringBuilder jmx, List<ScriptFormRequest.Sampler> samplers,
-                                Long thinkTimeMs, Map<Long, String> fileNames) {
+                                Long thinkTimeMs, Map<Long, String> fileNames, ScriptFormRequest.FormDef def) {
         for (ScriptFormRequest.Sampler sampler : samplers) {
-            appendSampler(jmx, sampler, fileNames);
+            appendSampler(jmx, sampler, fileNames, globalConfig(def));
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
 
     /**
-     * 追加 TestPlan 节点：JMeter 引擎要求测试计划根元素存在，否则 NonGUI 启动失败
+     * 读取表单定义的全局配置（null 安全，旧数据无 config 字段返回 null）
+     *
+     * @param def 表单场景定义
+     * @return 全局配置（可空）
+     */
+    private static ScriptFormRequest.Config globalConfig(ScriptFormRequest.FormDef def) {
+        return def == null ? null : def.getConfig();
+    }
+
+    /**
+     * 追加 TestPlan 节点：JMeter 引擎要求测试计划根元素存在，否则 NonGUI 启动失败；
+     * 全局自定义变量注入 TestPlan.user_defined_variables（UDV），接口任意位置 ${name} 引用
      *
      * @param jmx JMX 输出缓冲
+     * @param def 表单场景定义（取全局配置的自定义变量）
      */
-    private void appendTestPlan(StringBuilder jmx) {
+    private void appendTestPlan(StringBuilder jmx, ScriptFormRequest.FormDef def) {
+        List<ScriptFormRequest.Variable> variables = def != null && def.getConfig() != null
+                ? def.getConfig().getVariables() : null;
         jmx.append("    <TestPlan guiclass=\"TestPlanGui\" testclass=\"TestPlan\" testname=\"PerPress Test Plan\" enabled=\"true\">\n");
         jmx.append("      <stringProp name=\"TestPlan.comments\"></stringProp>\n");
         jmx.append("      <boolProp name=\"TestPlan.functional_mode\">false</boolProp>\n");
@@ -449,7 +465,26 @@ public class FormScriptJmxBuilder {
         jmx.append("      <boolProp name=\"TestPlan.serialize_threadgroups\">false</boolProp>\n");
         jmx.append("      <elementProp name=\"TestPlan.user_defined_variables\" elementType=\"Arguments\" ")
                 .append("guiclass=\"ArgumentsPanel\" testclass=\"Arguments\" testname=\"User Defined Variables\" enabled=\"true\">\n");
-        jmx.append("        <collectionProp name=\"Arguments.arguments\"/>\n");
+        if (variables == null || variables.isEmpty()) {
+            jmx.append("        <collectionProp name=\"Arguments.arguments\"/>\n");
+        } else {
+            jmx.append("        <collectionProp name=\"Arguments.arguments\">\n");
+            for (ScriptFormRequest.Variable variable : variables) {
+                if (variable == null || !StringUtils.hasText(variable.getName())) {
+                    continue;
+                }
+                jmx.append("          <elementProp name=\"").append(escapeAttr(variable.getName().trim()))
+                        .append("\" elementType=\"Argument\">\n");
+                jmx.append("            <stringProp name=\"Argument.name\">")
+                        .append(escapeText(variable.getName().trim())).append("</stringProp>\n");
+                jmx.append("            <stringProp name=\"Argument.value\">")
+                        .append(escapeText(variable.getValue() == null ? "" : variable.getValue()))
+                        .append("</stringProp>\n");
+                jmx.append("            <stringProp name=\"Argument.metadata\">=</stringProp>\n");
+                jmx.append("          </elementProp>\n");
+            }
+            jmx.append("        </collectionProp>\n");
+        }
         jmx.append("      </elementProp>\n");
         jmx.append("      <stringProp name=\"TestPlan.user_define_classpath\"></stringProp>\n");
         jmx.append("    </TestPlan>\n");
@@ -458,18 +493,20 @@ public class FormScriptJmxBuilder {
     /**
      * 追加单个采样器：CSVDataSet 列表 + HTTPSamplerProxy + HeaderManager + ResponseAssertion + 参数提取器
      *
-     * @param jmx       JMX 输出缓冲
-     * @param sampler   采样器定义
-     * @param fileNames CSV 引用的文件ID → 原始文件名映射
+     * @param jmx           JMX 输出缓冲
+     * @param sampler       采样器定义
+     * @param fileNames     CSV 引用的文件ID → 原始文件名映射
+     * @param globalConfig  全局配置（采样器 url 为相对路径时补全协议/域名/端口）
      */
-    private void appendSampler(StringBuilder jmx, ScriptFormRequest.Sampler sampler, Map<Long, String> fileNames) {
+    private void appendSampler(StringBuilder jmx, ScriptFormRequest.Sampler sampler,
+                               Map<Long, String> fileNames, ScriptFormRequest.Config globalConfig) {
         String name = StringUtils.hasText(sampler.getName()) ? sampler.getName() : sampler.getUrl();
         if (sampler.getCsvRefs() != null) {
             for (ScriptFormRequest.CsvRef csvRef : sampler.getCsvRefs()) {
                 appendCsvDataSet(jmx, csvRef, fileNames);
             }
         }
-        appendHttpSampler(jmx, name, sampler);
+        appendHttpSampler(jmx, name, sampler, globalConfig);
         jmx.append("      <hashTree>\n");
         if (sampler.getHeaders() != null && !sampler.getHeaders().isEmpty()) {
             appendHeaderManager(jmx, sampler.getHeaders());
@@ -519,14 +556,34 @@ public class FormScriptJmxBuilder {
     }
 
     /**
-     * 追加 HTTPSamplerProxy：解析 url 得到协议/域名/端口/路径，body 以原始文本方式渲染
+     * 追加 HTTPSamplerProxy：解析 url 得到协议/域名/端口/路径，body 以原始文本方式渲染。
+     * url 为相对路径（无 scheme）时用全局环境配置补全为绝对地址——换环境只改全局配置，不用逐接口修改
      *
-     * @param jmx     JMX 输出缓冲
-     * @param name    采样器名称
-     * @param sampler 采样器定义
+     * @param jmx           JMX 输出缓冲
+     * @param name          采样器名称
+     * @param sampler       采样器定义
+     * @param globalConfig  全局配置（协议/域名/端口）
      */
-    private void appendHttpSampler(StringBuilder jmx, String name, ScriptFormRequest.Sampler sampler) {
+    private void appendHttpSampler(StringBuilder jmx, String name, ScriptFormRequest.Sampler sampler,
+                                   ScriptFormRequest.Config globalConfig) {
         String rawUrl = sampler.getUrl().trim();
+        // 相对路径 → 全局环境补全（protocol://host[:port]/path）；未配置全局域名则要求完整 URL
+        if (!rawUrl.contains("://")) {
+            if (globalConfig == null || !StringUtils.hasText(globalConfig.getHost())) {
+                throw new BizException("接口 url 需为完整地址（http:// 开头），或在全局配置中填写域名：" + rawUrl);
+            }
+            StringBuilder absolute = new StringBuilder();
+            absolute.append(StringUtils.hasText(globalConfig.getProtocol()) ? globalConfig.getProtocol().trim() : "http");
+            absolute.append("://").append(globalConfig.getHost().trim());
+            if (globalConfig.getPort() != null) {
+                absolute.append(':').append(globalConfig.getPort());
+            }
+            if (!rawUrl.startsWith("/")) {
+                absolute.append('/');
+            }
+            absolute.append(rawUrl);
+            rawUrl = absolute.toString();
+        }
         String protocol;
         String port;
         String path;

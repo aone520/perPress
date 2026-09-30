@@ -9,8 +9,8 @@
 -->
 <template>
   <div class="page">
-    <!-- 工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <!-- 工具栏（page-card 全局卡片类：白底/细边框/圆角/淡阴影） -->
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
           <el-select
@@ -27,15 +27,15 @@
         </div>
         <el-button type="primary" :icon="Upload" @click="openUploadDialog">上传文件</el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 文件列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column prop="name" label="文件名" min-width="220" show-overflow-tooltip />
         <el-table-column label="类型" width="90" align="center">
           <template #default="{ row }">
-            <el-tag :type="FILE_TYPE_META[row.fileType]?.type || 'info'" effect="plain">
+            <el-tag :type="FILE_TYPE_META[row.fileType]?.type || 'info'" size="small" effect="plain">
               {{ row.fileType || '-' }}
             </el-tag>
           </template>
@@ -76,7 +76,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 上传文件对话框 -->
     <el-dialog
@@ -261,9 +261,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar-card {
-  margin-bottom: 12px;
-}
+/* 工具栏卡片与列表卡片间距由全局 .page-card + .page-card 统一控制（16px），此处不再重复声明 */
 
 .toolbar {
   display: flex;
@@ -282,7 +280,7 @@ onMounted(load)
 
 .toolbar-title {
   font-size: 13px;
-  color: #909399;
+  color: var(--pp-text-secondary);
 }
 
 .w-140 {
@@ -295,10 +293,7 @@ onMounted(load)
   margin-top: 14px;
 }
 
-.mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 13px;
-}
+/* mono 等宽类已由全局 base.css 提供 */
 
 .md5-cell {
   cursor: default;

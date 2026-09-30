@@ -7,14 +7,15 @@
 -->
 <template>
   <div class="page">
-    <!-- 搜索工具栏 -->
-    <el-card shadow="never" class="toolbar-card">
+    <!-- 搜索工具栏（左右布局：左侧筛选条件 + 右侧安装命令入口） -->
+    <div class="page-card toolbar-card">
       <div class="toolbar">
         <div class="toolbar-left">
           <el-input
             v-model="query.keyword"
             placeholder="主机名 / IP 模糊搜索"
             clearable
+            :prefix-icon="Search"
             class="w-220"
             @keyup.enter="handleSearch"
             @clear="handleSearch"
@@ -36,16 +37,20 @@
           安装命令
         </el-button>
       </div>
-    </el-card>
+    </div>
 
     <!-- 节点列表 -->
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="rows" border stripe>
+    <div class="page-card">
+      <el-table v-loading="loading" :data="rows">
         <el-table-column prop="hostname" label="主机名" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="ip" label="IP" width="130" />
+        <el-table-column label="IP" width="130">
+          <template #default="{ row }">
+            <span class="mono">{{ row.ip }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="86" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'ONLINE' ? 'success' : 'info'">
+            <el-tag :type="row.status === 'ONLINE' ? 'success' : 'info'" size="small">
               {{ row.status === 'ONLINE' ? '在线' : '离线' }}
             </el-tag>
           </template>
@@ -89,10 +94,14 @@
           </template>
         </el-table-column>
         <el-table-column label="Agent 版本" width="100" align="center">
-          <template #default="{ row }">{{ row.agentVersion || '-' }}</template>
+          <template #default="{ row }">
+            <span class="mono">{{ row.agentVersion || '-' }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="引擎版本" width="100" align="center">
-          <template #default="{ row }">{{ row.engineVersion || '-' }}</template>
+          <template #default="{ row }">
+            <span class="mono">{{ row.engineVersion || '-' }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="最后心跳时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.lastHeartbeatTime) }}</template>
@@ -124,7 +133,7 @@
           @size-change="handleSizeChange"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 编辑标签对话框 -->
     <el-dialog v-model="labelDialog.visible" title="编辑标签" width="460px">
@@ -471,9 +480,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar-card {
-  margin-bottom: 12px;
-}
+/* 工具栏卡片间距由全局 .page-card + .page-card 统一控制（16px），此处不再重复声明 */
 
 .toolbar {
   display: flex;
@@ -522,7 +529,7 @@ onMounted(load)
   align-items: center;
   justify-content: space-between;
   font-size: 13px;
-  color: #606266;
+  color: var(--pp-text-regular);
   margin-bottom: 8px;
 }
 
@@ -535,10 +542,10 @@ onMounted(load)
 .token-code {
   flex: 1;
   padding: 8px 10px;
-  background-color: #f5f7fa;
+  background-color: var(--pp-bg);
   border-radius: 4px;
   font-size: 13px;
-  color: #303133;
+  color: var(--pp-text-primary);
   word-break: break-all;
 }
 
