@@ -5,14 +5,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.per.server.common.BizException;
 import com.per.server.dto.ScriptDebugVO;
 import com.per.server.dto.ScriptFormRequest;
+import com.per.server.entity.DataFile;
+import com.per.server.mapper.DataFileMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.io.BufferedReader;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -32,7 +41,11 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ScriptDebugService {
+
+    /** 数据文件查询（参数文件 CSV 首行数据加载用） */
+    private final DataFileMapper dataFileMapper;
 
     /** JSON 解析器（只读场景，ObjectMapper 线程安全） */
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -147,6 +160,10 @@ public class ScriptDebugService {
         item.setName(StringUtils.hasText(sampler.getName()) ? sampler.getName() : sampler.getUrl());
         item.setMethod(methodOf(sampler.getMethod()));
 
+        // 0) 参数文件变量加载：取每个 CSV 引用的首行数据入池（模拟 JMeter 单线程取首行），
+        //    URL/请求头/请求体中的 ${列名} 均可引用；文件缺失时跳过（变量未定义将在下方 URL 校验中提示）
+        loadCsvVars(sampler, vars);
+
         // 1) URL：变量替换 + 相对路径补全全局环境（规则与 FormScriptJmxBuilder 一致）
         String url = resolveVars(trimToEmpty(sampler.getUrl()), vars);
         if (!url.contains("://")) {
@@ -155,6 +172,15 @@ public class ScriptDebugService {
                 return item;
             }
             url = buildAbsoluteUrl(cfg, url);
+        }
+        // 变量替换后 URL 仍残留 ${xxx} 即为未定义变量（参数文件缺失/变量名写错），
+        // 提前拦截并给出可用变量清单，避免笼统的"URL 非法"
+        List<String> undefined = undefinedVars(url, vars);
+        if (!undefined.isEmpty()) {
+            item.setError("URL 含未定义变量: " + String.join(", ", undefined)
+                    + (vars.isEmpty() ? "（当前无可用变量，请检查参数文件是否上传、变量名是否一致）"
+                    : "（可用变量: " + String.join(", ", vars.keySet()) + "）"));
+            return item;
         }
         item.setUrl(url);
 
@@ -321,6 +347,117 @@ public class ScriptDebugService {
         new TreeMap<>(response.headers().map()).forEach((k, values) ->
                 headers.add(new ScriptDebugVO.Kv(k, String.join(", ", values))));
         return headers;
+    }
+
+    /**
+     * 加载采样器引用的参数文件（CSV）首行数据到变量池：
+     * - varNames 已指定时以其为列名；ignoreFirstLine=true 跳过文件首行（表头），数据从第二行取
+     * - varNames 为空时文件首行即列名，数据从第二行取
+     * - 文件缺失/读取失败仅记日志跳过，对应变量保持未定义（由 URL 校验给出明确提示）
+     *
+     * @param sampler 采样器定义（csvRefs 引用列表）
+     * @param vars    变量池（写入 CSV 列名 → 首行值）
+     */
+    private void loadCsvVars(ScriptFormRequest.Sampler sampler, Map<String, String> vars) {
+        if (sampler.getCsvRefs() == null) {
+            return;
+        }
+        for (ScriptFormRequest.CsvRef ref : sampler.getCsvRefs()) {
+            if (ref == null || ref.getFileId() == null) {
+                continue;
+            }
+            try {
+                DataFile file = dataFileMapper.selectById(ref.getFileId());
+                if (file == null || !StringUtils.hasText(file.getStoragePath())) {
+                    log.warn("[Debug] 参数文件不存在（fileId={}），相关变量未加载", ref.getFileId());
+                    continue;
+                }
+                List<String> lines = readHeadLines(Paths.get(file.getStoragePath()), 2);
+                if (lines.isEmpty()) {
+                    continue;
+                }
+                String delimiter = StringUtils.hasText(ref.getDelimiter()) ? ref.getDelimiter() : ",";
+                List<String> names;
+                List<String> rows;
+                if (StringUtils.hasText(ref.getVarNames())) {
+                    // 显式指定列名：数据行为全部行，ignoreFirstLine 时跳过表头行
+                    names = splitLine(ref.getVarNames(), delimiter);
+                    rows = Boolean.TRUE.equals(ref.getIgnoreFirstLine()) && lines.size() > 1
+                            ? lines.subList(1, lines.size()) : lines;
+                } else {
+                    // 未指定列名：文件首行即表头
+                    names = splitLine(lines.get(0), delimiter);
+                    rows = lines.size() > 1 ? lines.subList(1, lines.size()) : List.of();
+                }
+                if (rows.isEmpty() || names.isEmpty()) {
+                    continue;
+                }
+                List<String> values = splitLine(rows.get(0), delimiter);
+                for (int i = 0; i < names.size() && i < values.size(); i++) {
+                    String name = names.get(i).trim();
+                    if (!name.isEmpty()) {
+                        vars.put(name, values.get(i));
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[Debug] 参数文件加载失败（fileId={}）: {}", ref.getFileId(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 只读文件前 n 行（参数文件可能很大，调试只取表头与首条数据）
+     *
+     * @param path 文件路径
+     * @param max  最多读取行数
+     * @return 行列表（空文件/IO 异常返回空列表）
+     */
+    private List<String> readHeadLines(Path path, int max) {
+        List<String> lines = new ArrayList<>();
+        if (!Files.isReadable(path)) {
+            return lines;
+        }
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            String line;
+            while (lines.size() < max && (line = reader.readLine()) != null) {
+                if (!line.isBlank()) {
+                    lines.add(line);
+                }
+            }
+        } catch (IOException e) {
+            log.warn("[Debug] 参数文件读取失败（{}）: {}", path, e.getMessage());
+        }
+        return lines;
+    }
+
+    /**
+     * 按分隔符拆行（保留空列，分隔符按字面量处理）
+     *
+     * @param line      原始行
+     * @param delimiter 分隔符
+     * @return 拆分后的列列表
+     */
+    private List<String> splitLine(String line, String delimiter) {
+        return List.of(line.split(Pattern.quote(delimiter), -1));
+    }
+
+    /**
+     * 找出文本中已替换后仍残留的未定义变量名（${xxx} 且不在变量池）
+     *
+     * @param text 已完成变量替换的文本
+     * @param vars 变量池
+     * @return 未定义变量名列表
+     */
+    private List<String> undefinedVars(String text, Map<String, String> vars) {
+        List<String> names = new ArrayList<>();
+        Matcher matcher = VAR_PATTERN.matcher(text == null ? "" : text);
+        while (matcher.find()) {
+            String name = matcher.group(1).trim();
+            if (!vars.containsKey(name) && !names.contains(name)) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     /**
