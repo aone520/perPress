@@ -98,6 +98,7 @@ class JtlMetricsCollectorTest {
         assertEquals("500", report.errors().get(0).code());
         assertEquals("assert failed, actual != expected", report.errors().get(0).msg(),
                 "含逗号的 failureMessage 应被引号还原完整");
+        assertEquals(windowStart + 300, report.errors().get(0).ts(), "错误样本应携带样本时间戳");
 
         System.out.println("[Test] 单窗聚合上报 JSON 示例:");
         System.out.println(Jsons.write(report));

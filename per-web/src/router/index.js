@@ -19,6 +19,7 @@ import FileListView from '@/views/file/FileListView.vue'
 import EngineListView from '@/views/engine/EngineListView.vue'
 import TaskListView from '@/views/task/TaskListView.vue'
 import TaskDetailView from '@/views/task/TaskDetailView.vue'
+import TaskEditPage from '@/views/task/TaskEditPage.vue'
 
 /** 路由表：登录页 + 主布局下的业务页面 */
 const routes = [
@@ -85,10 +86,24 @@ const routes = [
         meta: { title: '任务中心' }
       },
       {
+        // 新建任务（全屏编辑页）：需在 /tasks/:id 之前注册，避免 new 被当作 id
+        path: 'tasks/new',
+        name: 'TaskCreate',
+        component: TaskEditPage,
+        meta: { title: '新建压测任务' }
+      },
+      {
         path: 'tasks/:id',
         name: 'TaskDetail',
         component: TaskDetailView,
         meta: { title: '任务详情' }
+      },
+      {
+        // 编辑任务（仅 CREATED 状态，全屏编辑页）
+        path: 'tasks/:id/edit',
+        name: 'TaskEdit',
+        component: TaskEditPage,
+        meta: { title: '编辑任务' }
       },
       {
         path: 'engines',

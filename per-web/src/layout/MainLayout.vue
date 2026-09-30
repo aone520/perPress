@@ -1,31 +1,37 @@
 <!--
-  主布局组件：左侧近黑蓝导航侧栏（圆角 pill 激活态 + 图标菜单，数据驱动渲染）
-  + 顶部精简标题栏（当前页面名 + 用户下拉）+ 主内容区路由出口；
+  主布局组件：左侧近黑蓝导航侧栏（圆角 pill 激活态 + 图标菜单，数据驱动渲染，支持折叠收起为图标栏）
+  + 顶部精简标题栏（折叠开关 + 当前页面名 + 用户下拉）+ 主内容区路由出口；
   配色全部引用设计令牌（src/styles/tokens.css），不再硬编码色值
 -->
 <template>
   <el-container class="layout-root">
-    <!-- 左侧导航 -->
-    <el-aside width="228px" class="layout-aside">
-      <div class="logo">
+    <!-- 左侧导航（collapsed 时收起为 64px 图标栏，菜单项 hover 出 tooltip） -->
+    <el-aside :width="collapsed ? '64px' : '228px'" class="layout-aside" :class="{ collapsed }">
+      <div class="logo" :class="{ collapsed }">
         <div class="logo-mark">P</div>
-        <div class="logo-text">
+        <div v-if="!collapsed" class="logo-text">
           <span class="logo-name">PerPress</span>
           <span class="logo-slogan">分布式压测平台</span>
         </div>
       </div>
-      <el-menu :default-active="activePath" router class="side-menu">
+      <el-menu :default-active="activePath" router :collapse="collapsed" :collapse-transition="false" class="side-menu">
         <el-menu-item v-for="menu in visibleMenus" :key="menu.path" :index="menu.path">
           <el-icon class="menu-icon"><component :is="menu.icon" /></el-icon>
-          <span>{{ menu.label }}</span>
+          <template #title>{{ menu.label }}</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
     <el-container class="layout-body">
-      <!-- 顶部标题栏：当前页面名 + 用户入口 -->
+      <!-- 顶部标题栏：折叠开关 + 当前页面名 + 用户入口 -->
       <el-header class="layout-header">
-        <div class="header-title">{{ pageTitle }}</div>
+        <div class="header-left">
+          <el-icon class="collapse-btn" :title="collapsed ? '展开菜单' : '收起菜单'" @click="toggleCollapse">
+            <Expand v-if="collapsed" />
+            <Fold v-else />
+          </el-icon>
+          <div class="header-title">{{ pageTitle }}</div>
+        </div>
         <el-dropdown @command="handleCommand">
           <span class="user-entry">
             <span class="user-avatar">{{ avatarChar }}</span>
@@ -50,7 +56,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Monitor,
@@ -62,13 +68,29 @@ import {
   Tickets,
   ArrowDown,
   FolderOpened,
-  Cpu
+  Cpu,
+  Fold,
+  Expand
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+
+/** 折叠状态 localStorage 键 */
+const COLLAPSE_KEY = 'per-aside-collapsed'
+
+/** 侧边栏折叠状态（localStorage 持久化，刷新后保持） */
+const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) === '1')
+
+/**
+ * 切换侧边栏折叠/展开并持久化
+ */
+function toggleCollapse() {
+  collapsed.value = !collapsed.value
+  localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0')
+}
 
 /** 基础菜单（数据驱动渲染，新增入口只需在此追加） */
 const baseMenus = [
@@ -134,20 +156,25 @@ function handleCommand(command) {
   height: 100%;
 }
 
-/* ===== 侧边栏：近黑蓝底，menu 与 aside 同色融为一体 ===== */
+/* ===== 侧边栏：近黑蓝底，menu 与 aside 同色为一体，支持折叠过渡 ===== */
 .layout-aside {
   background-color: var(--pp-aside-bg);
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
+  transition: width 0.2s ease;
 }
 
-/* logo 区：渐变小方块 + 字标 + 副标语 */
+/* logo 区：渐变小方块 + 字标 + 副标语（折叠态收起字标居中） */
 .logo {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 18px 20px 14px;
+}
+.logo.collapsed {
+  justify-content: center;
+  padding: 18px 0 14px;
 }
 .logo-mark {
   width: 30px;
@@ -219,6 +246,28 @@ function handleCommand(command) {
   background-color: var(--pp-surface);
   border-bottom: 1px solid var(--pp-border);
   padding: 0 24px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 折叠开关：与标题同排的图标按钮 */
+.collapse-btn {
+  font-size: 17px;
+  color: var(--pp-text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+.collapse-btn:hover {
+  background-color: var(--pp-bg);
+  color: var(--pp-text-primary);
 }
 
 .header-title {

@@ -174,7 +174,7 @@
           <el-table :data="errors.samples" size="small" max-height="320">
             <el-table-column label="时间" width="180" align="center">
               <template #default="{ row }">
-                {{ formatDateTime(row.createTime ?? row.ts) }}
+                {{ formatDateTime(row.ts ?? row.createTime) }}
               </template>
             </el-table-column>
             <el-table-column prop="sampler" label="事务" min-width="200" show-overflow-tooltip />

@@ -41,8 +41,9 @@ public record MetricsReport(Long taskId, String nodeKey, long windowStart, long 
      *
      * @param label 采样器名称
      * @param code  响应码（JTL responseCode 列）
-     * @param msg   失败信息（JTL failureMessage 列，截断至 200 字符）
+     * @param msg   失败信息（JTL failureMessage 列，断言失败为空时回退 responseMessage，截断至 200 字符）
+     * @param ts    样本时间戳（毫秒，JTL timeStamp 列，用于报告页错误样本明细的时间展示）
      */
-    public record ErrorSample(String label, String code, String msg) {
+    public record ErrorSample(String label, String code, String msg, long ts) {
     }
 }

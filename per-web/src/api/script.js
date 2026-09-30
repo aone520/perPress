@@ -33,6 +33,15 @@ export function createForm(body) {
 }
 
 /**
+ * 一键调试脚本：server 按表单定义逐接口顺序请求一次，返回每个接口的请求/响应/断言/提取明细
+ * @param {Object} formDef 表单定义（编辑器当前内容，未保存也可调试）
+ * @returns {Promise<{code:number,message:string,data:{items:Array}}>} data 为 ScriptDebugVO
+ */
+export function debugScript(formDef) {
+  return http.post('/api/scripts/debug', { formDef })
+}
+
+/**
  * 查询脚本详情（含 formDef 与版本列表）
  * @param {number|string} id 脚本 ID
  * @returns {Promise<{code:number,message:string,data:Object}>} data 为 ScriptDetailVO

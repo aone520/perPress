@@ -19,9 +19,12 @@
           保存为新版本 v{{ nextVersion }}
         </el-tag>
       </div>
-      <el-button type="primary" :icon="Check" :loading="saving" @click="handleSave">
-        {{ isEdit ? '保存新版本' : '创建脚本' }}
-      </el-button>
+      <div class="header-actions">
+        <el-button :icon="VideoPlay" @click="handleDebug">调试</el-button>
+        <el-button type="primary" :icon="Check" :loading="saving" @click="handleSave">
+          {{ isEdit ? '保存新版本' : '创建脚本' }}
+        </el-button>
+      </div>
     </div>
 
     <div class="edit-body">
@@ -33,22 +36,8 @@
           :class="{ active: activeSection === 'meta' }"
           @click="scrollToSection('meta')"
         >
-          {{ isEdit ? '版本信息' : '基本信息' }}
-        </div>
-        <div
-          class="outline-item"
-          :class="{ active: activeSection === 'config' }"
-          @click="scrollToSection('config')"
-        >
-          全局配置
+          基本信息
           <span v-if="hasGlobalEnv" class="outline-badge env">环境</span>
-        </div>
-        <div
-          class="outline-item"
-          :class="{ active: activeSection === 'thread' }"
-          @click="scrollToSection('thread')"
-        >
-          线程组设置
         </div>
         <template v-for="(group, gi) in def.groups" :key="group._key">
           <div
@@ -76,12 +65,14 @@
 
       <!-- 右侧内容区（滚动容器） -->
       <div ref="contentRef" class="edit-content">
-        <!-- 基本信息（新建）/ 版本信息（编辑） -->
+        <!-- 基本信息（含目标环境与自定义变量，合并展示减少零碎区块） -->
         <section id="sec-meta" class="edit-card">
           <div class="card-head">
             <div>
-              <div class="card-title">{{ isEdit ? '版本信息' : '基本信息' }}</div>
-              <div class="card-desc">{{ isEdit ? '保存后生成新版本，原版本不受影响' : '脚本名称与描述' }}</div>
+              <div class="card-title">基本信息</div>
+              <div class="card-desc">
+                {{ isEdit ? '版本备注与关联文件 · ' : '脚本名称与描述 · ' }}目标环境与自定义变量：接口 URL 只填路径，换环境只改这里，无需逐接口修改
+              </div>
             </div>
           </div>
           <el-form label-width="80px" v-if="!isEdit">
@@ -119,18 +110,9 @@
               </el-col>
             </el-row>
           </el-form>
-        </section>
 
-        <!-- 全局配置 -->
-        <section id="sec-config" class="edit-card">
-          <div class="card-head">
-            <div>
-              <div class="card-title">全局配置</div>
-              <div class="card-desc">
-                统一目标环境与自定义变量：接口 URL 只填路径（如 /api/login），换环境只改这里，无需逐接口修改
-              </div>
-            </div>
-          </div>
+          <!-- 目标环境 -->
+          <div class="sub-title section-divider">目标环境</div>
           <el-form label-width="80px">
             <el-row :gutter="12">
               <el-col :span="5">
@@ -169,7 +151,7 @@
               目标环境：{{ globalEnvPreview }}（接口填相对路径时自动拼接）
             </div>
 
-            <div class="sub-title">
+            <div class="sub-title section-divider">
               自定义变量
               <el-button link type="primary" size="small" :icon="Plus" @click="addVariable">
                 添加变量
@@ -186,31 +168,6 @@
               <el-input v-model="variable.value" placeholder="值（如 test001）" class="dyn-input mono" clearable />
               <el-button link type="danger" @click="def.config.variables.splice(vi, 1)">删除</el-button>
             </div>
-          </el-form>
-        </section>
-
-        <!-- 线程组设置 -->
-        <section id="sec-thread" class="edit-card">
-          <div class="card-head">
-            <div>
-              <div class="card-title">线程组设置</div>
-              <div class="card-desc">线程组名称与组内思考时间（并发数/持续时间在创建任务时配置）</div>
-            </div>
-          </div>
-          <el-form label-width="80px">
-            <el-row :gutter="12">
-              <el-col :span="12">
-                <el-form-item label="线程组名">
-                  <el-input v-model="def.threadGroupName" placeholder="如：订单压测线程组" maxlength="64" clearable />
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item label="思考时间">
-                  <el-input-number v-model="def.thinkTimeMs" :min="0" :step="100" controls-position="right" />
-                  <span class="unit-text">毫秒（0 表示不启用）</span>
-                </el-form-item>
-              </el-col>
-            </el-row>
           </el-form>
         </section>
 
@@ -350,14 +307,19 @@
                     <el-tooltip content="从本接口响应中提取值存入变量，串行组内后续接口以 ${引用名} 使用" placement="top">
                       <el-icon class="sub-help"><QuestionFilled /></el-icon>
                     </el-tooltip>
+                    <!-- 并行组不支持提取：按钮置灰并悬浮说明，避免"找不到按钮"的困惑 -->
+                    <el-tooltip
+                      v-if="group.execution === 'PARALLEL'"
+                      content="并行组内接口各自独立线程执行，变量不互通，不支持参数提取；如需关联请改为串行组"
+                      placement="top"
+                    >
+                      <span class="add-extractor-disabled">+ 添加</span>
+                    </el-tooltip>
                     <el-button
-                      v-if="group.execution !== 'PARALLEL'"
+                      v-else
                       link type="primary" size="small"
                       @click="sampler.extractors.push(createEmptyExtractor())"
-                    >+ 添加提取器</el-button>
-                  </div>
-                  <div v-if="group.execution === 'PARALLEL'" class="inline-tip">
-                    并行组内接口各自独立线程执行，变量不互通，不支持参数提取；如需关联请改为串行组
+                    >+ 添加</el-button>
                   </div>
                   <div v-for="ex in sampler.extractors" :key="ex._key" class="extractor-row">
                     <div class="dyn-row">
@@ -431,6 +393,9 @@
 
     <!-- 提取器测试面板（页面级单例，open 时传入提取器对象引用） -->
     <ExtractorTester ref="testerRef" />
+
+    <!-- 一键调试抽屉（携带当前编辑内容请求后端逐接口执行） -->
+    <ScriptDebugDrawer ref="debugRef" />
   </div>
 </template>
 
@@ -597,9 +562,10 @@ export function sanitizeFormDef(def) {
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowRight, Check, Plus, QuestionFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Check, Plus, QuestionFilled, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ExtractorTester from '@/components/ExtractorTester.vue'
+import ScriptDebugDrawer from '@/components/ScriptDebugDrawer.vue'
 import { addVersion, createForm, detail } from '@/api/script'
 import { page as pageFiles } from '@/api/file'
 
@@ -629,6 +595,22 @@ const saving = ref(false)
 
 /** 提取器测试面板引用 */
 const testerRef = ref(null)
+
+/** 一键调试抽屉引用 */
+const debugRef = ref(null)
+
+/**
+ * 一键调试：按当前编辑内容（无需保存）逐接口真实请求一次，结果在右侧抽屉展示；
+ * 先做完整性校验（URL/域名/提取器配置），未通过的项修复后再调试
+ */
+function handleDebug() {
+  const invalid = validateFormDef(def)
+  if (invalid) {
+    ElMessage.warning(invalid)
+    return
+  }
+  debugRef.value?.open(sanitizeFormDef(def))
+}
 
 /** 内容滚动容器（大纲滚动定位与可视区监听） */
 const contentRef = ref(null)
@@ -1211,6 +1193,12 @@ onBeforeUnmount(() => {
   gap: 10px;
   min-width: 0;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
 .script-name {
   font-size: 15px;
   font-weight: 600;
@@ -1521,6 +1509,21 @@ onBeforeUnmount(() => {
 }
 .sub-title .el-button {
   margin-left: auto;
+}
+
+/* 并行组禁用态的添加按钮文案（tooltip 需普通元素包裹，disabled 按钮不触发事件） */
+.add-extractor-disabled {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--pp-text-placeholder);
+  cursor: not-allowed;
+}
+
+/* 同卡片内的分区分隔（目标环境/自定义变量）：细线 + 加大上间距 */
+.sub-title.section-divider {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--pp-border);
 }
 
 .dyn-row {

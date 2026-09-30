@@ -75,6 +75,9 @@ public class JtlMetricsCollector {
     /** JTL 列索引：responseCode */
     private static final int IDX_RESPONSE_CODE = 3;
 
+    /** JTL 列索引：responseMessage（HTTP 状态短语，failureMessage 为空时兜底） */
+    private static final int IDX_RESPONSE_MESSAGE = 4;
+
     /** JTL 列索引：success（true/false） */
     private static final int IDX_SUCCESS = 7;
 
@@ -350,7 +353,10 @@ public class JtlMetricsCollector {
         sampleCount.incrementAndGet();
         String failureMessage = parts.length > IDX_FAILURE_MESSAGE ? parts[IDX_FAILURE_MESSAGE] : "";
         if (!success && windowErrors.size() < MAX_ERRORS_PER_WINDOW) {
-            windowErrors.add(new ErrorSample(label, responseCode, truncate(failureMessage, ERROR_MESSAGE_MAX)));
+            // 断言失败信息优先；无断言的 HTTP 错误（500/连接拒绝等）failureMessage 为空，回退 responseMessage 展示原因
+            String responseMessage = parts.length > IDX_RESPONSE_MESSAGE ? parts[IDX_RESPONSE_MESSAGE] : "";
+            String message = failureMessage.isBlank() ? responseMessage : failureMessage;
+            windowErrors.add(new ErrorSample(label, responseCode, truncate(message, ERROR_MESSAGE_MAX), timestamp));
         }
         aggregate(timestamp, elapsed, label, success, bytes, sentBytes, allThreads);
     }

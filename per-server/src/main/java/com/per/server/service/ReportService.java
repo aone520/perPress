@@ -397,9 +397,14 @@ public class ReportService {
             int limit = Math.min(50, samples.size());
             for (int i = 0; i < limit; i++) {
                 JsonNode row = samples.get(i);
-                html.append("<tr><td>").append(formatDateTime(jsonLongOrNull(row, "ts"))).append("</td><td class=\"tl\">")
-                        .append(esc(jsonText(row, "label"))).append("</td><td>")
-                        .append(esc(jsonText(row, "code"))).append("</td><td class=\"tl\">")
+                // 时间优先样本真实 ts，老数据为空时回退入库时间 createTime
+                Long sampleTs = jsonLongOrNull(row, "ts");
+                if (sampleTs == null) {
+                    sampleTs = jsonLongOrNull(row, "createTime");
+                }
+                html.append("<tr><td>").append(formatDateTime(sampleTs)).append("</td><td class=\"tl\">")
+                        .append(esc(jsonText(row, "sampler"))).append("</td><td>")
+                        .append(esc(jsonText(row, "responseCode"))).append("</td><td class=\"tl\">")
                         .append(esc(jsonText(row, "message"))).append("</td></tr>");
             }
             html.append("</tbody></table>");
@@ -818,10 +823,13 @@ public class ReportService {
         for (ErrorSample sample : errorSamples) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("nodeKey", sample.getNodeKey());
-            row.put("label", sample.getSampler());
-            row.put("code", sample.getResponseCode());
+            // 字段名与前端错误样本明细列对齐（sampler/responseCode），避免 Web 端取值落空
+            row.put("sampler", sample.getSampler());
+            row.put("responseCode", sample.getResponseCode());
             row.put("message", sample.getMessage());
+            // ts 为样本真实时间（老数据可能为空），createTime 为入库时间兜底
             row.put("ts", sample.getTs());
+            row.put("createTime", epochMs(sample.getCreateTime()));
             samples.add(row);
         }
 

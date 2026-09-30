@@ -2,11 +2,14 @@ package com.per.server.controller;
 
 import com.per.server.common.R;
 import com.per.server.dto.PageVO;
+import com.per.server.dto.ScriptDebugRequest;
+import com.per.server.dto.ScriptDebugVO;
 import com.per.server.dto.ScriptDetailVO;
 import com.per.server.dto.ScriptFormRequest;
 import com.per.server.dto.ScriptVersionCreateRequest;
 import com.per.server.dto.ScriptVersionVO;
 import com.per.server.dto.ScriptVO;
+import com.per.server.service.ScriptDebugService;
 import com.per.server.service.ScriptService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +34,8 @@ import org.springframework.web.multipart.MultipartFile;
 public class ScriptController {
 
     private final ScriptService scriptService;
+
+    private final ScriptDebugService scriptDebugService;
 
     /**
      * 分页查询脚本列表
@@ -73,6 +78,18 @@ public class ScriptController {
     @PostMapping("/form")
     public R<ScriptVO> createForm(@RequestBody @Valid ScriptFormRequest request) {
         return R.ok(scriptService.createForm(request));
+    }
+
+    /**
+     * 一键调试：按表单定义逐接口顺序真实请求一次（server 直连目标环境，不落库、不依赖压测节点），
+     * 返回每个接口的完整请求/响应/断言/提取明细；串行链路提取的变量向后传递
+     *
+     * @param request 调试请求（携带编辑器当前 formDef，未保存也可调试）
+     * @return 逐接口调试明细
+     */
+    @PostMapping("/debug")
+    public R<ScriptDebugVO> debug(@RequestBody @Valid ScriptDebugRequest request) {
+        return R.ok(scriptDebugService.debug(request.getFormDef()));
     }
 
     /**

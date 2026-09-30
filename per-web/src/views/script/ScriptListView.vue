@@ -55,7 +55,7 @@
         <el-table-column label="创建时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right" align="center">
+        <el-table-column label="操作" width="230" fixed="right" align="center">
           <template #default="{ row }">
             <el-button v-if="row.type === 'FORM'" link type="primary" @click="goEdit(row)">编辑</el-button>
             <el-button link type="primary" @click="goDetail(row)">详情</el-button>
