@@ -1,0 +1,11 @@
+channel|city|keyword
+tech|beijing|phone
+food|shanghai|snack
+travel|guangzhou|hotel
+fashion|hangzhou|dress
+sports|shenzhen|run-shoes
+digital|chengdu|laptop
+beauty|wuhan|lipstick
+home|nanjing|sofa
+outdoor|xiamen|tent
+music|changsha|guitar
