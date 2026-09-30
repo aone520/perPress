@@ -380,8 +380,9 @@ public class ScriptDebugService {
                 List<String> names;
                 List<String> rows;
                 if (StringUtils.hasText(ref.getVarNames())) {
-                    // 显式指定列名：数据行为全部行，ignoreFirstLine 时跳过表头行
-                    names = splitLine(ref.getVarNames(), delimiter);
+                    // 显式指定列名：变量名列表固定按逗号拆分（与 JMeter CSVDataSet variableNames 语义一致，
+                    // 与数据文件分隔符无关——数据为 | 分隔的 TXT 时 varNames 仍是逗号分隔的列名）
+                    names = splitLine(ref.getVarNames(), ",");
                     rows = Boolean.TRUE.equals(ref.getIgnoreFirstLine()) && lines.size() > 1
                             ? lines.subList(1, lines.size()) : lines;
                 } else {
