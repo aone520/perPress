@@ -58,8 +58,11 @@ if [ ! -f "$PROJECT_ROOT/per-web/dist/index.html" ]; then
   echo "前端 dist 不存在，先构建前端 ..."
   cd "$PROJECT_ROOT/per-web" && npm run build
 fi
-rm -rf "$SCRIPT_DIR/dist"
-cp -R "$PROJECT_ROOT/per-web/dist" "$SCRIPT_DIR/dist"
+# 注意：只清空目录内容、保留目录本身（rm -rf 整个目录会换 inode，
+# macOS Docker/OrbStack 的 bind mount 指向旧 inode，容器内将看不到新文件）
+mkdir -p "$SCRIPT_DIR/dist"
+rm -rf "$SCRIPT_DIR/dist"/*
+cp -R "$PROJECT_ROOT/per-web/dist/." "$SCRIPT_DIR/dist/"
 echo "  dist 就绪"
 
 # ---------- 5. 启动全套 ----------
