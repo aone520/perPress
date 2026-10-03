@@ -792,8 +792,9 @@ public class ReportService {
     }
 
     /**
-     * 为节点行补充压力机资源信息：resources 时序（t 秒 + cpu/mem 百分比，与指标序列同时间轴）
-     * 与 cpuPeak/memPeak 峰值；无采样数据（历史任务）时补空列表，前端隐藏资源图
+     * 为节点行补充压力机资源信息：resources 时序（t 秒 + cpu/mem 百分比 + 网络收发 B/s，
+     * 与指标序列同时间轴）与 cpuPeak/memPeak/netPeakBps 峰值；
+     * 无采样数据（历史任务）时补空列表，前端隐藏资源图
      *
      * @param row     节点展示行（原地写入）
      * @param samples 该节点任务期间的资源采样列表（可空）
@@ -802,16 +803,22 @@ public class ReportService {
         List<Map<String, Object>> resources = new ArrayList<>();
         double cpuPeak = 0;
         double memPeak = 0;
+        double netPeakBps = 0;
         if (samples != null) {
             for (NodeResourceSample sample : samples) {
                 double cpu = sample.getCpuUsage() == null ? 0 : sample.getCpuUsage();
                 double mem = sample.getMemUsage() == null ? 0 : sample.getMemUsage();
+                double recvBps = sample.getNetRecvBps() == null ? 0 : sample.getNetRecvBps();
+                double sentBps = sample.getNetSentBps() == null ? 0 : sample.getNetSentBps();
                 cpuPeak = Math.max(cpuPeak, cpu);
                 memPeak = Math.max(memPeak, mem);
+                netPeakBps = Math.max(netPeakBps, recvBps + sentBps);
                 Map<String, Object> point = new LinkedHashMap<>();
                 point.put("t", epochMs(sample.getCreateTime()) / 1000);
                 point.put("cpu", round2(cpu));
                 point.put("mem", round2(mem));
+                point.put("recvBps", round2(recvBps));
+                point.put("sentBps", round2(sentBps));
                 point.put("jvmMemUsed", sample.getJvmMemUsed());
                 point.put("jvmMemMax", sample.getJvmMemMax());
                 resources.add(point);
@@ -820,6 +827,7 @@ public class ReportService {
         row.put("resources", resources);
         row.put("cpuPeak", round2(cpuPeak));
         row.put("memPeak", round2(memPeak));
+        row.put("netPeakBps", round2(netPeakBps));
     }
 
     /**

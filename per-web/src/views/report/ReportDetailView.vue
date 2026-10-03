@@ -144,6 +144,11 @@
             <el-table-column label="MEM峰值" width="90" align="right">
               <template #default="{ row }">{{ row.memPeak != null ? row.memPeak + '%' : '-' }}</template>
             </el-table-column>
+            <el-table-column label="网络峰值" width="100" align="right">
+              <template #default="{ row }">
+                {{ row.netPeakBps != null ? ((row.netPeakBps * 8) / 1e6).toFixed(2) + ' Mbps' : '-' }}
+              </template>
+            </el-table-column>
           </el-table>
         </div>
 
@@ -151,13 +156,17 @@
         <div v-if="hasNodeResources" class="page-card block-card">
           <div class="card-title">压力机资源</div>
           <el-row :gutter="12">
-            <el-col :span="12">
+            <el-col :span="8">
               <div class="sub-title">CPU 使用率（%）</div>
               <div ref="nodeCpuChartRef" class="chart-box" />
             </el-col>
-            <el-col :span="12">
+            <el-col :span="8">
               <div class="sub-title">内存使用率（%）</div>
               <div ref="nodeMemChartRef" class="chart-box" />
+            </el-col>
+            <el-col :span="8">
+              <div class="sub-title">网络带宽（Mbps，虚线为发送）</div>
+              <div ref="nodeNetChartRef" class="chart-box" />
             </el-col>
           </el-row>
         </div>
@@ -301,11 +310,13 @@ const errChartRef = ref(null)
 /** 压力机资源双图容器 ref（有采样数据才渲染） */
 const nodeCpuChartRef = ref(null)
 const nodeMemChartRef = ref(null)
+const nodeNetChartRef = ref(null)
 let rtChart = null
 let tpsChart = null
 let errChart = null
 let nodeCpuChart = null
 let nodeMemChart = null
+let nodeNetChart = null
 
 /** 报告摘要（无数据时给空对象兜底） */
 const summary = computed(() => report.value?.summary || {})
@@ -577,6 +588,47 @@ function renderNodeResChart(metric, chart) {
 function renderNodeResCharts() {
   renderNodeResChart('cpu', nodeCpuChart)
   renderNodeResChart('mem', nodeMemChart)
+  renderNodeNetChart()
+}
+
+/**
+ * 渲染压力机网络带宽图（Mbps）：每节点两条线——接收（实线）与发送（虚线），同色区分节点
+ */
+function renderNodeNetChart() {
+  const rows = nodes.value.filter((row) => (row.resources || []).length)
+  if (!nodeNetChart || !rows.length) {
+    return
+  }
+  const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
+  const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
+  const series = []
+  rows.forEach((row, i) => {
+    const color = palette[i % palette.length]
+    const label = nodeLabel(row)
+    series.push(chartLine(`${label} 收`, row.resources.map((p) => bpsToMbps(p.recvBps)), color))
+    series.push(chartLine(`${label} 发`, row.resources.map((p) => bpsToMbps(p.sentBps)), color,
+      { lineStyle: { width: 2, type: 'dashed' } }))
+  })
+  nodeNetChart.setOption(
+    {
+      tooltip: chartTooltip(),
+      legend: chartLegend(series.map((s) => s.name)),
+      grid: CHART_GRID,
+      xAxis: baseXAxis(longest.resources),
+      yAxis: [{ ...chartValueAxis('Mbps') }],
+      series
+    },
+    true
+  )
+}
+
+/**
+ * 字节/秒转 Mbps（保留两位小数）
+ * @param {number|string} bps 字节每秒
+ * @returns {number} Mbps
+ */
+function bpsToMbps(bps) {
+  return Math.round((((Number(bps) || 0) * 8) / 1e6) * 100) / 100
 }
 
 /**
@@ -606,6 +658,9 @@ function ensureCharts() {
   }
   if (nodeMemChartRef.value && !nodeMemChart) {
     nodeMemChart = echarts.init(nodeMemChartRef.value)
+  }
+  if (nodeNetChartRef.value && !nodeNetChart) {
+    nodeNetChart = echarts.init(nodeNetChartRef.value)
   }
 }
 
@@ -690,6 +745,7 @@ function handleResize() {
   errChart?.resize()
   nodeCpuChart?.resize()
   nodeMemChart?.resize()
+  nodeNetChart?.resize()
 }
 
 // 页面挂载：注册 resize 监听并加载数据（图表初始化由 load 内懒执行）
@@ -706,11 +762,13 @@ onUnmounted(() => {
   errChart?.dispose()
   nodeCpuChart?.dispose()
   nodeMemChart?.dispose()
+  nodeNetChart?.dispose()
   rtChart = null
   tpsChart = null
   errChart = null
   nodeCpuChart = null
   nodeMemChart = null
+  nodeNetChart = null
 })
 </script>
 

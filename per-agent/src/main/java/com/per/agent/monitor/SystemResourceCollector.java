@@ -3,11 +3,14 @@ package com.per.agent.monitor;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import oshi.SystemInfo;
 import oshi.hardware.CentralProcessor;
 import oshi.hardware.GlobalMemory;
 import oshi.hardware.HardwareAbstractionLayer;
+import oshi.hardware.NetworkIF;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,6 +18,7 @@ import org.springframework.stereotype.Component;
  * <p>采集方案（二选一，本实现选用 oshi）：
  * 1) oshi：CPU 使用率通过两次 getSystemCpuLoadTicks 采样间隔 1s 计算差值；
  *    操作系统内存已用/总量通过 oshi GlobalMemory 获取（更贴近真实物理内存）；
+ *    网络带宽通过 NetworkIF 累计字节数两次采样差分计算（排除回环与容器虚拟网卡）；
  *    JVM 堆已用/最大通过 MemoryMXBean 获取。
  * 2) 备选（oshi 不可用时）：com.sun.management.OperatingSystemMXBean 的
  *    getSystemCpuLoad()/getCpuLoad() 取 CPU，Runtime.getRuntime() 取 JVM 内存。</p>
@@ -26,22 +30,39 @@ public class SystemResourceCollector {
     /** CPU 两次采样间隔（毫秒） */
     private static final long CPU_SAMPLE_INTERVAL_MS = 1000L;
 
+    /** 排除的网卡名前缀（回环与容器/网桥虚拟网卡，其流量不代表压力机真实收发） */
+    private static final String[] EXCLUDED_IF_PREFIXES = {"lo", "veth", "docker", "br-", "virbr", "utun", "tun", "tap"};
+
     /** oshi CPU 处理器（进程内复用） */
     private final CentralProcessor processor;
 
     /** oshi 内存信息（进程内复用） */
     private final GlobalMemory memory;
 
+    /** 参与统计的物理网卡列表（初始化时过滤虚拟网卡，进程内复用） */
+    private final List<NetworkIF> networkIFs;
+
+    /** 上次网络采样的累计收/发字节数与时间戳（差分计算速率用，-1 表示尚未采样） */
+    private long lastNetRecvBytes = -1;
+    private long lastNetSentBytes = -1;
+    private long lastNetTickMs = -1;
+
     /** JVM 内存 MXBean */
     private final MemoryMXBean memoryMXBean = ManagementFactory.getMemoryMXBean();
 
     /**
-     * 初始化 oshi 硬件抽象层（进程内只加载一次本地库）。
+     * 初始化 oshi 硬件抽象层（进程内只加载一次本地库），并筛选物理网卡。
      */
     public SystemResourceCollector() {
         HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
         this.processor = hardware.getProcessor();
         this.memory = hardware.getMemory();
+        this.networkIFs = new ArrayList<>();
+        for (NetworkIF nif : hardware.getNetworkIFs()) {
+            if (!isExcluded(nif.getName())) {
+                networkIFs.add(nif);
+            }
+        }
     }
 
     /**
@@ -85,6 +106,41 @@ public class SystemResourceCollector {
     }
 
     /**
+     * 采集网络收发速率（字节/秒）：全部物理网卡累计字节数与上次采样的差分 ÷ 间隔。
+     * 首次调用只记录基线返回 0；网卡计数器重置/回绕时按 0 兜底。
+     *
+     * @return [接收速率 B/s, 发送速率 B/s]
+     */
+    public double[] collectNetBps() {
+        long recv = 0;
+        long sent = 0;
+        try {
+            for (NetworkIF nif : networkIFs) {
+                nif.updateAttributes();
+                recv += Math.max(0, nif.getBytesRecv());
+                sent += Math.max(0, nif.getBytesSent());
+            }
+        } catch (Exception e) {
+            log.warn("[Monitor] 网络采样失败，本次返回 0：{}", e.getMessage());
+            return new double[]{0, 0};
+        }
+        long now = System.currentTimeMillis();
+        if (lastNetRecvBytes < 0 || now <= lastNetTickMs) {
+            lastNetRecvBytes = recv;
+            lastNetSentBytes = sent;
+            lastNetTickMs = now;
+            return new double[]{0, 0};
+        }
+        double seconds = (now - lastNetTickMs) / 1000.0;
+        double recvBps = Math.max(0, recv - lastNetRecvBytes) / seconds;
+        double sentBps = Math.max(0, sent - lastNetSentBytes) / seconds;
+        lastNetRecvBytes = recv;
+        lastNetSentBytes = sent;
+        lastNetTickMs = now;
+        return new double[]{recvBps, sentBps};
+    }
+
+    /**
      * 采集 JVM 堆内存已用（字节）。
      *
      * @return JVM 堆已用（字节）
@@ -101,5 +157,23 @@ public class SystemResourceCollector {
      */
     public long collectJvmMemMax() {
         return memoryMXBean.getHeapMemoryUsage().getMax();
+    }
+
+    /**
+     * 判断网卡是否应排除（回环与容器/网桥/隧道等虚拟网卡）。
+     *
+     * @param name 网卡名
+     * @return true 表示不参与带宽统计
+     */
+    private static boolean isExcluded(String name) {
+        if (name == null || name.isBlank()) {
+            return true;
+        }
+        for (String prefix : EXCLUDED_IF_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

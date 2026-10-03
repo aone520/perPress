@@ -40,6 +40,12 @@ public class NodeResourceSample {
     /** JVM 最大堆（字节） */
     private Long jvmMemMax;
 
+    /** 网络接收速率（字节/秒，物理网卡差分） */
+    private Double netRecvBps;
+
+    /** 网络发送速率（字节/秒，物理网卡差分） */
+    private Double netSentBps;
+
     /** 采样时间（心跳到达时间） */
     private LocalDateTime createTime;
 }

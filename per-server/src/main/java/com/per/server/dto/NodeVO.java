@@ -56,6 +56,12 @@ public class NodeVO {
     /** JVM 最大内存（字节） */
     private Long jvmMemMax;
 
+    /** 网络接收速率（字节/秒，物理网卡差分） */
+    private Double netRecvBps;
+
+    /** 网络发送速率（字节/秒，物理网卡差分） */
+    private Double netSentBps;
+
     /** 最近心跳时间 */
     private LocalDateTime lastHeartbeatTime;
 

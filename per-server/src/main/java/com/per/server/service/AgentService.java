@@ -107,6 +107,8 @@ public class AgentService {
         update.setMemTotal(request.getMemTotal());
         update.setJvmMemUsed(request.getJvmMemUsed());
         update.setJvmMemMax(request.getJvmMemMax());
+        update.setNetRecvBps(request.getNetRecvBps());
+        update.setNetSentBps(request.getNetSentBps());
         if (StringUtils.hasText(request.getEngineVersion())) {
             update.setEngineVersion(request.getEngineVersion());
         }
@@ -142,6 +144,8 @@ public class AgentService {
                 sample.setMemTotal(request.getMemTotal());
                 sample.setJvmMemUsed(request.getJvmMemUsed());
                 sample.setJvmMemMax(request.getJvmMemMax());
+                sample.setNetRecvBps(request.getNetRecvBps());
+                sample.setNetSentBps(request.getNetSentBps());
                 resourceSampleMapper.insert(sample);
             }
         } catch (Exception e) {

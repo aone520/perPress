@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS `node` (
   `status` VARCHAR(16) NOT NULL DEFAULT 'OFFLINE' COMMENT 'ONLINE/OFFLINE',
   `cpu_usage` DOUBLE, `mem_usage` DOUBLE, `mem_total` BIGINT,
   `jvm_mem_used` BIGINT, `jvm_mem_max` BIGINT,
+  `net_recv_bps` DOUBLE COMMENT '网络接收速率B/s', `net_sent_bps` DOUBLE COMMENT '网络发送速率B/s',
   `last_heartbeat_time` DATETIME,
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -168,6 +169,8 @@ CREATE TABLE IF NOT EXISTS `node_resource_sample` (
   `mem_total` BIGINT COMMENT '系统总内存(字节)',
   `jvm_mem_used` BIGINT COMMENT 'JVM已用堆(字节)',
   `jvm_mem_max` BIGINT COMMENT 'JVM最大堆(字节)',
+  `net_recv_bps` DOUBLE COMMENT '网络接收速率B/s(物理网卡差分)',
+  `net_sent_bps` DOUBLE COMMENT '网络发送速率B/s(物理网卡差分)',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '采样时间',
   KEY `idx_task_node` (`task_id`, `node_key`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

@@ -28,6 +28,12 @@ public class AgentHeartbeatRequest {
     /** JVM 最大内存（字节） */
     private Long jvmMemMax;
 
+    /** 网络接收速率（字节/秒，物理网卡差分） */
+    private Double netRecvBps;
+
+    /** 网络发送速率（字节/秒，物理网卡差分） */
+    private Double netSentBps;
+
     /** 已部署 JMeter 引擎版本 */
     private String engineVersion;
 
