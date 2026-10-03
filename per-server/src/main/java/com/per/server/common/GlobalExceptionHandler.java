@@ -1,9 +1,12 @@
 package com.per.server.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 全局异常处理器：将各类异常统一转换为 R 响应结构，避免堆栈信息直接暴露给前端
@@ -36,6 +39,18 @@ public class GlobalExceptionHandler {
                 .map(fieldError -> fieldError.getDefaultMessage())
                 .orElse("参数校验失败");
         return R.error(message);
+    }
+
+    /**
+     * 处理不存在的接口或静态资源，返回真实 HTTP 404，避免被兜底异常误报为服务器内部错误。
+     *
+     * @param e 资源不存在异常
+     * @return HTTP 404 与统一错误体
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<R<Void>> handleNoResourceFoundException(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(R.error(HttpStatus.NOT_FOUND.value(), "请求资源不存在"));
     }
 
     /**

@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${1:-http://localhost:8180}"
-SCRIPT_NAME="混合压测场景-电商下单+浏览流量"
+SCRIPT_NAME="全场景压测-读写混合"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -56,7 +56,7 @@ echo "登录成功"
 
 # ---------- 1. 查询是否已存在（幂等） ----------
 EXIST_TOTAL="$(curl -s -H "Authorization: Bearer $TOKEN" \
-  --get --data-urlencode "keyword=混合压测场景" "$BASE_URL/api/scripts" | json_field "['data']['total']")"
+  --get --data-urlencode "keyword=全场景压测" "$BASE_URL/api/scripts" | json_field "['data']['total']")"
 
 # ---------- 2. 上传参数文件（CSV + TXT） ----------
 CSV_ID="$(curl -s -X POST "$BASE_URL/api/files" -H "Authorization: Bearer $TOKEN" \
@@ -70,21 +70,22 @@ fi
 echo "参数文件就绪：users.csv#$CSV_ID / browse.txt#$TXT_ID"
 
 # ---------- 3. 创建混合脚本（或复用已有） ----------
-# 串行组：登录(${username}/${password} 来自 CSV) → JSON提取 token →
-#         查价(头携带 ${token}) → JSON提取 price →
-#         下单(REGEX提取 orderId) → 支付(BOUNDARY提取 payNo)
-# 并行组：3 接口独立线程组，各自挂 TXT 引用（shareMode.all 共享指针逐行取数）
+# 串行组：登录(${username}/${password} 来自 CSV) → JSON提取 token → 查价(头 ${token}) → 加购 →
+#         下单(REGEX提取 orderId) → 支付(BOUNDARY提取 payNo) → 评论(漏斗 50%)
+# 并行读组：3 接口独立线程组，各自挂 TXT 引用（shareMode.all 共享指针逐行取数）
+# 并行写组：3 写接口（PUT/POST/DELETE），头携带 UDV 预置凭证 ${apiToken}
 cat > "$TMP_DIR/formdef.json" <<'EOF'
 {
-  "threadGroupName": "混合压测-场景组",
-  "thinkTimeMs": 200,
+  "threadGroupName": "全场景压测-场景组",
+  "thinkTimeMs": 100,
   "config": {
     "protocol": "http",
     "host": "per-target",
     "port": 9090,
     "variables": [
       { "name": "payChannel", "value": "ALIPAY" },
-      { "name": "appVersion", "value": "2.4.0" }
+      { "name": "appVersion", "value": "2.4.0" },
+      { "name": "apiToken", "value": "tk.10001.a1b2c3d4e5f60718" }
     ]
   },
   "groups": [
@@ -113,7 +114,19 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
           "extractors": [ { "type": "JSON", "refName": "price", "expression": "$.data.price", "defaultValue": "0" } ]
         },
         {
-          "name": "03-提交订单",
+          "name": "03-加入购物车",
+          "method": "PUT",
+          "url": "/api/mix/cart",
+          "headers": [
+            { "k": "Content-Type", "v": "application/json" },
+            { "k": "Authorization", "v": "Bearer ${token}" }
+          ],
+          "body": "{\"sku\":\"${sku}\",\"qty\":1}",
+          "assertions": [ { "type": "CODE", "expect": "200" } ],
+          "extractors": [ { "type": "BOUNDARY", "refName": "cartId", "expression": "\"cartId\":\"", "rightBoundary": "\"", "defaultValue": "NOT_FOUND" } ]
+        },
+        {
+          "name": "04-提交订单",
           "method": "POST",
           "url": "/api/mix/order",
           "headers": [
@@ -125,7 +138,7 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
           "extractors": [ { "type": "REGEX", "refName": "orderId", "expression": "\"orderId\":\"([^\"]+)\"", "template": "$1$", "defaultValue": "NOT_FOUND" } ]
         },
         {
-          "name": "04-订单支付",
+          "name": "05-订单支付",
           "method": "POST",
           "url": "/api/mix/pay",
           "headers": [
@@ -133,8 +146,21 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
             { "k": "Authorization", "v": "Bearer ${token}" }
           ],
           "body": "{\"orderId\":\"${orderId}\",\"payChannel\":\"${payChannel}\"}",
-          "assertions": [ { "type": "CODE", "expect": "200" }, { "type": "TEXT", "expect": "ok" } ],
+          "assertions": [ { "type": "CODE", "expect": "200" } ],
           "extractors": [ { "type": "BOUNDARY", "refName": "payNo", "expression": "\"payNo\":\"", "rightBoundary": "\"", "defaultValue": "NOT_FOUND" } ]
+        },
+        {
+          "name": "06-评价晒单",
+          "method": "POST",
+          "url": "/api/mix/comment",
+          "headers": [
+            { "k": "Content-Type", "v": "application/json" },
+            { "k": "Authorization", "v": "Bearer ${token}" }
+          ],
+          "body": "{\"orderId\":\"${orderId}\",\"content\":\"review-by-${username}\"}",
+          "assertions": [ { "type": "CODE", "expect": "200" } ],
+          "extractors": [ { "type": "REGEX", "refName": "commentId", "expression": "\"commentId\":\"([^\"]+)\"", "template": "$1$", "defaultValue": "NOT_FOUND" } ],
+          "trafficPercent": 50
         }
       ]
     },
@@ -143,7 +169,7 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
       "execution": "PARALLEL",
       "samplers": [
         {
-          "name": "P1-信息流",
+          "name": "R1-信息流",
           "method": "GET",
           "url": "/api/mix/feed?channel=${channel}&city=${city}&v=${appVersion}",
           "csvRefs": [
@@ -152,7 +178,7 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
           "assertions": [ { "type": "CODE", "expect": "200" } ]
         },
         {
-          "name": "P2-猜你喜欢",
+          "name": "R2-猜你喜欢",
           "method": "GET",
           "url": "/api/mix/recommend?city=${city}&limit=5",
           "csvRefs": [
@@ -161,12 +187,53 @@ cat > "$TMP_DIR/formdef.json" <<'EOF'
           "assertions": [ { "type": "CODE", "expect": "200" } ]
         },
         {
-          "name": "P3-搜索",
+          "name": "R3-搜索",
           "method": "GET",
           "url": "/api/mix/search?keyword=${keyword}&city=${city}",
           "csvRefs": [
             { "fileId": __TXT_ID__, "varNames": "channel,city,keyword", "delimiter": "|", "ignoreFirstLine": true, "recycle": true, "shareMode": "shareMode.all" }
           ],
+          "assertions": [ { "type": "CODE", "expect": "200" } ]
+        }
+      ]
+    },
+    {
+      "name": "写流量",
+      "execution": "PARALLEL",
+      "samplers": [
+        {
+          "name": "W1-更新资料",
+          "method": "PUT",
+          "url": "/api/mix/profile",
+          "csvRefs": [
+            { "fileId": __TXT_ID__, "varNames": "channel,city,keyword", "delimiter": "|", "ignoreFirstLine": true, "recycle": true, "shareMode": "shareMode.all" }
+          ],
+          "headers": [
+            { "k": "Content-Type", "v": "application/json" },
+            { "k": "Authorization", "v": "Bearer ${apiToken}" }
+          ],
+          "body": "{\"nickname\":\"u-${keyword}\",\"city\":\"${city}\"}",
+          "assertions": [ { "type": "CODE", "expect": "200" } ]
+        },
+        {
+          "name": "W2-申请退款",
+          "method": "POST",
+          "url": "/api/mix/refund",
+          "headers": [
+            { "k": "Content-Type", "v": "application/json" },
+            { "k": "Authorization", "v": "Bearer ${apiToken}" }
+          ],
+          "body": "{\"orderId\":\"OD20260101000000999\",\"amount\":99}",
+          "assertions": [ { "type": "CODE", "expect": "200" } ]
+        },
+        {
+          "name": "W3-移除购物车",
+          "method": "DELETE",
+          "url": "/api/mix/cart?sku=SKU-${keyword}",
+          "csvRefs": [
+            { "fileId": __TXT_ID__, "varNames": "channel,city,keyword", "delimiter": "|", "ignoreFirstLine": true, "recycle": true, "shareMode": "shareMode.all" }
+          ],
+          "headers": [ { "k": "Authorization", "v": "Bearer ${apiToken}" } ],
           "assertions": [ { "type": "CODE", "expect": "200" } ]
         }
       ]
@@ -179,7 +246,7 @@ sed -i '' -e "s/__CSV_ID__/$CSV_ID/g" -e "s/__TXT_ID__/$TXT_ID/g" "$TMP_DIR/form
 if [ "$EXIST_TOTAL" != "0" ] && [ -n "$EXIST_TOTAL" ]; then
   echo "脚本 ${SCRIPT_NAME} 已存在（${EXIST_TOTAL} 个），跳过创建"
 else
-  python3 -c "import json;d=json.load(open('$TMP_DIR/formdef.json'));print(json.dumps({'name':'$SCRIPT_NAME','description':'串行组：登录→查价→下单→支付（引用 users.csv，提取 token/price/orderId/payNo 逐级传递）；并行组：信息流/推荐/搜索（引用 browse.txt，TXT 参数文件 | 分隔）','formDef':d}))" > "$TMP_DIR/create.json"
+  python3 -c "import json;d=json.load(open('$TMP_DIR/formdef.json'));print(json.dumps({'name':'$SCRIPT_NAME','description':'串行组：登录→查价→加购→下单→支付→评论（引用 users.csv，提取 token/price/orderId/payNo 逐级传递，评论漏斗50%）；并行读组：信息流/推荐/搜索（browse.txt）；并行写组：改资料/退款/删购（UDV 预置凭证，PUT/POST/DELETE）','formDef':d}))" > "$TMP_DIR/create.json"
   CREATE_RESP="$(curl -s -X POST "$BASE_URL/api/scripts/form" \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     --data-binary @"$TMP_DIR/create.json")"

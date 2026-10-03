@@ -6,7 +6,7 @@ package com.per.agent.client;
  *
  * @param taskId 任务 ID
  * @param nodeKey 节点密钥
- * @param phase   回执阶段：READY/RUNNING/FINISHED/FAILED
+ * @param phase   回执阶段：READY/RUNNING/FINISHED/STOPPED/FAILED
  * @param message 附加说明（失败原因、停止原因等）
  */
 public record TaskReceipt(Long taskId, String nodeKey, String phase, String message) {
@@ -17,8 +17,11 @@ public record TaskReceipt(Long taskId, String nodeKey, String phase, String mess
     /** 回执阶段：压测进程已启动 */
     public static final String PHASE_RUNNING = "RUNNING";
 
-    /** 回执阶段：压测结束（正常完成或被服务端停止） */
+    /** 回执阶段：压测正常完成 */
     public static final String PHASE_FINISHED = "FINISHED";
+
+    /** 回执阶段：收到停止指令后结束 */
+    public static final String PHASE_STOPPED = "STOPPED";
 
     /** 回执阶段：失败（准备/启动/运行任一环节） */
     public static final String PHASE_FAILED = "FAILED";

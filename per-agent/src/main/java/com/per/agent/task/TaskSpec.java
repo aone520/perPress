@@ -24,5 +24,6 @@ public record TaskSpec(
         String jmxContent,
         List<TaskFile> files,
         Map<String, Object> jmeterProps,
-        Integer jmeterHeapMb) {
+        Integer jmeterHeapMb,
+        Long startAt) {
 }

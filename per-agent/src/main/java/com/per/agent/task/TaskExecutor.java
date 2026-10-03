@@ -19,12 +19,13 @@ public interface TaskExecutor {
      * 进程退出后按退出码回执 FINISHED/FAILED。
      *
      * @param taskId 任务 ID
+     * @param startAt 服务端统一起跑时间（epoch 毫秒，可空）
      * @throws Exception 执行过程中的任意异常
      */
-    void handleStart(long taskId) throws Exception;
+    void handleStart(long taskId, Long startAt) throws Exception;
 
     /**
-     * 处理 STOP 指令：销毁对应任务进程（3 秒未退强杀）并回执 FINISHED。
+     * 处理 STOP 指令：销毁对应任务进程（3 秒未退强杀）并回执 STOPPED。
      *
      * @param taskId 任务 ID
      * @throws Exception 执行过程中的任意异常
@@ -43,4 +44,8 @@ public interface TaskExecutor {
      * 停止所有运行中的压测任务（心跳失联自停时调用）。
      */
     void stopAllRunning();
+
+    /** Agent 重启后向服务端补报已清理的孤儿进程。 */
+    default void reportRecoveredFailures() {
+    }
 }

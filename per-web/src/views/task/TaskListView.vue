@@ -94,7 +94,7 @@
         <el-table-column prop="createBy" label="创建人" width="110" align="center">
           <template #default="{ row }">{{ row.createBy || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="290" fixed="right" align="center">
+        <el-table-column label="操作" width="380" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="goDetail(row)">详情</el-button>
             <el-button
@@ -114,7 +114,7 @@
               监控
             </el-button>
             <el-button
-              v-if="row.status === 'FINISHED'"
+              v-if="['FINISHED', 'PARTIAL_FAILED', 'CANCELLED'].includes(row.status)"
               link
               type="primary"
               @click="goReport(row)"
@@ -142,13 +142,14 @@
               v-if="['PREPARING', 'RUNNING', 'STOPPING'].includes(row.status)"
               link
               type="danger"
+              :disabled="row.status === 'STOPPING'"
               @click="handleStop(row)"
             >
-              停止
+              {{ stopButtonLabel(row, '停止') }}
             </el-button>
             <!-- 复制：一键继承配置快速建新任务（未启动/终态显示） -->
             <el-button
-              v-if="['CREATED', 'FINISHED', 'FAILED'].includes(row.status)"
+              v-if="['CREATED', 'FINISHED', 'FAILED', 'PARTIAL_FAILED', 'CANCELLED'].includes(row.status)"
               link
               type="primary"
               @click="handleCopy(row)"
@@ -157,7 +158,7 @@
             </el-button>
             <!-- 删除：未启动或终态任务可删，连同报告与指标数据一并清理 -->
             <el-button
-              v-if="['CREATED', 'FINISHED', 'FAILED'].includes(row.status)"
+              v-if="['CREATED', 'FINISHED', 'FAILED', 'PARTIAL_FAILED', 'CANCELLED'].includes(row.status)"
               link
               type="danger"
               @click="handleRemove(row)"
@@ -197,8 +198,10 @@ import {
   copyTask
 } from '@/api/task'
 import { formatDateTime } from '@/utils/format'
+import { useTaskCountdown } from '@/composables/useTaskCountdown'
 
 const router = useRouter()
+const { stopButtonLabel } = useTaskCountdown()
 
 /** 任务状态元信息：展示文案与 tag 颜色 */
 const TASK_STATUS_META = {
@@ -207,7 +210,9 @@ const TASK_STATUS_META = {
   RUNNING: { text: '运行中', type: 'success' },
   STOPPING: { text: '停止中', type: 'warning' },
   FINISHED: { text: '已完成', type: 'primary' },
-  FAILED: { text: '失败', type: 'danger' }
+  FAILED: { text: '失败', type: 'danger' },
+  PARTIAL_FAILED: { text: '部分失败', type: 'warning' },
+  CANCELLED: { text: '已取消', type: 'info' }
 }
 
 /** 压测模式元信息：展示文案 */

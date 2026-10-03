@@ -69,6 +69,7 @@ public class PollTask {
         if (!lifecycle.isRegistered()) {
             return;
         }
+        taskExecutor.reportRecoveredFailures();
         PollResponse response = serverClient.poll(lifecycle.currentNodeKey());
         if (response == null || response.command() == null || response.command().isBlank()) {
             return; // 无指令
@@ -95,7 +96,7 @@ public class PollTask {
     private void dispatch(TaskCommand command) {
         switch (command.command()) {
             case PREPARE -> submitWorker(() -> taskExecutor.handlePrepare(command.task()));
-            case START -> submitWorker(() -> taskExecutor.handleStart(command.taskId()));
+            case START -> submitWorker(() -> taskExecutor.handleStart(command.taskId(), command.task().startAt()));
             case STOP -> {
                 try {
                     taskExecutor.handleStop(command.taskId());

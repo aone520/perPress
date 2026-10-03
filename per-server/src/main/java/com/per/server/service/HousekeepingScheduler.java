@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 数据保留清理调度器：每日凌晨删除已结束任务（FINISHED/FAILED）的超期指标快照与错误样本，
+ * 数据保留清理调度器：每日凌晨删除已结束任务的超期指标快照与错误样本，
  * 固化报告 test_report 不在清理范围。删除按批执行（每批 5000 行），避免大事务长锁
  */
 @Slf4j
@@ -26,9 +26,9 @@ public class HousekeepingScheduler {
     /** 每批删除行数上限 */
     private static final int BATCH_SIZE = 5000;
 
-    /** 已结束任务状态的子查询（所属任务状态为 FINISHED/FAILED 才可清理） */
+    /** 已结束任务状态的子查询 */
     private static final String FINISHED_TASK_IDS_SQL =
-            "SELECT id FROM test_task WHERE status IN ('FINISHED','FAILED')";
+            "SELECT id FROM test_task WHERE status IN ('FINISHED','FAILED','PARTIAL_FAILED','CANCELLED')";
 
     private final MetricSnapshotMapper metricSnapshotMapper;
     private final ErrorSampleMapper errorSampleMapper;

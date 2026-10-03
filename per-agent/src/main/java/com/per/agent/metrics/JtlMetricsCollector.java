@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -22,7 +23,7 @@ import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * JTL 结果文件增量采集器（M3 指标链路核心）：JTL 增量采集 → 10s 窗口聚合 → 直方图分桶 → 上报。
+ * JTL 结果文件增量采集器（M3 指标链路核心）：JTL 增量采集 → 可配置窗口聚合（默认 3s）→ 直方图分桶 → 上报。
  * <ul>
  *   <li>增量读取：RandomAccessFile 记住文件偏移，采集线程每 1s 轮询一次；
  *       首次读取跳过表头行；文件末尾未写完整的残行留待下一轮；文件长度回退（同路径重跑）时重置偏移重新读。</li>
@@ -33,7 +34,7 @@ import lombok.extern.slf4j.Slf4j;
  *       轮询时发现当前时间已越过当前窗末尾也封窗（低流量任务不掉尾窗）。</li>
  *   <li>封窗上报：窗口内按 label 聚合 {count, errorCount, bytes, sentBytes, activeThreads(max),
  *       minMs/maxMs/sumMs, buckets}，errors 每窗最多 10 条（msg 截断 200），投递到独立上报单线程，
- *       POST /agent/metrics；code!=0 仅 WARN 不重试，网络失败静默（下一窗数据独立）。</li>
+ *       POST /agent/metrics；业务拒绝不重试，网络失败按指数退避重试。</li>
  *   <li>任务结束：stopAndFlush() 中断采集线程 → 补读剩余增量 → 以 finished=true 封最后未封窗
  *       （无未封样本时也发空 samplers 的 finished 报告，保证指标流结束信号必达）。</li>
  * </ul>
@@ -56,6 +57,15 @@ public class JtlMetricsCollector {
 
     /** 单轮增量读取的最大字节数（超出分多轮读完，防止瞬时大文件占内存） */
     private static final int MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+
+    /** 网络上报最大尝试次数（首次 + 重试） */
+    private static final int REPORT_MAX_ATTEMPTS = 5;
+
+    /** 网络上报首次退避时间 */
+    private static final long REPORT_RETRY_BASE_MS = 500L;
+
+    /** 超时封窗额外迟到容忍时间，避免窗口缩短后同步缩短磁盘落盘缓冲 */
+    private static final long LATE_TOLERANCE_MS = 10_000L;
 
     /** 每窗最多上报的错误样本条数 */
     private static final int MAX_ERRORS_PER_WINDOW = 10;
@@ -123,6 +133,9 @@ public class JtlMetricsCollector {
     /** 表头是否已跳过（文件重建后重置） */
     private boolean headerSkipped = false;
 
+    /** JTL 表头列名到索引，支持关闭非必要字段后的紧凑 CSV */
+    private final Map<String, Integer> columnIndexes = new HashMap<>();
+
     /** 当前未封窗起点（-1 表示尚无样本） */
     private long currentWindowStart = -1;
 
@@ -147,7 +160,7 @@ public class JtlMetricsCollector {
      * @param reporter 上报回调（接收窗口报告；抛出的异常由本类吞掉并记日志）
      */
     public JtlMetricsCollector(long taskId, String nodeKey, Path jtlFile, Consumer<MetricsReport> reporter) {
-        this(taskId, nodeKey, jtlFile, reporter, 10_000L);
+        this(taskId, nodeKey, jtlFile, reporter, 3_000L);
     }
 
     /**
@@ -231,8 +244,9 @@ public class JtlMetricsCollector {
         }
         reportExecutor.shutdown();
         try {
-            if (!reportExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.warn("[Metrics] 任务 {} 上报线程 5s 内未排空，丢弃未发送窗口报告", taskId);
+            if (!reportExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                log.error("[Metrics] 任务 {} 上报线程 60s 内未排空，强制终止未发送窗口报告", taskId);
+                reportExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -291,22 +305,29 @@ public class JtlMetricsCollector {
                         taskId, fileLength, fileOffset);
                 fileOffset = 0;
                 headerSkipped = false;
+                columnIndexes.clear();
             }
             if (fileLength <= fileOffset) {
                 return;
             }
-            int chunk = (int) Math.min(fileLength - fileOffset, MAX_CHUNK_BYTES);
-            byte[] buffer = new byte[chunk];
-            raf.seek(fileOffset);
-            raf.readFully(buffer);
-            int lineStart = 0;
-            for (int i = 0; i < buffer.length; i++) {
-                if (buffer[i] == '\n') {
-                    handleLine(new String(buffer, lineStart, i - lineStart, StandardCharsets.UTF_8));
-                    lineStart = i + 1;
+            // 单轮持续读取到本轮开始时的文件尾；8MB 仅为单块内存上限，不再形成每秒 8MB 的吞吐上限。
+            while (fileOffset < fileLength) {
+                int chunk = (int) Math.min(fileLength - fileOffset, MAX_CHUNK_BYTES);
+                byte[] buffer = new byte[chunk];
+                raf.seek(fileOffset);
+                raf.readFully(buffer);
+                int lineStart = 0;
+                for (int i = 0; i < buffer.length; i++) {
+                    if (buffer[i] == '\n') {
+                        handleLine(new String(buffer, lineStart, i - lineStart, StandardCharsets.UTF_8));
+                        lineStart = i + 1;
+                    }
                 }
+                if (lineStart == 0) {
+                    break;
+                }
+                fileOffset += lineStart;
             }
-            fileOffset += lineStart;
         }
     }
 
@@ -322,39 +343,54 @@ public class JtlMetricsCollector {
             return;
         }
         if (!headerSkipped && line.startsWith("timeStamp")) {
+            String[] header = splitCsv(line);
+            for (int i = 0; i < header.length; i++) {
+                columnIndexes.put(header[i].trim(), i);
+            }
             headerSkipped = true;
             return;
         }
         String[] parts = splitCsv(line);
-        if (parts.length <= IDX_SUCCESS) {
+        int timestampIndex = columnIndex("timeStamp", IDX_TIMESTAMP);
+        int elapsedIndex = columnIndex("elapsed", IDX_ELAPSED);
+        int labelIndex = columnIndex("label", IDX_LABEL);
+        int responseCodeIndex = columnIndex("responseCode", IDX_RESPONSE_CODE);
+        int responseMessageIndex = columnIndex("responseMessage", IDX_RESPONSE_MESSAGE);
+        int successIndex = columnIndex("success", IDX_SUCCESS);
+        int failureMessageIndex = columnIndex("failureMessage", IDX_FAILURE_MESSAGE);
+        int bytesIndex = columnIndex("bytes", IDX_BYTES);
+        int sentBytesIndex = columnIndex("sentBytes", IDX_SENT_BYTES);
+        int allThreadsIndex = columnIndex("allThreads", IDX_ALL_THREADS);
+        int requiredMax = Math.max(Math.max(timestampIndex, elapsedIndex), Math.max(labelIndex, successIndex));
+        if (parts.length <= requiredMax) {
             skipBadLine(line, "列数不足（" + parts.length + " 列）");
             return;
         }
         long timestamp;
         long elapsed;
         try {
-            timestamp = Long.parseLong(parts[IDX_TIMESTAMP].trim());
-            elapsed = Long.parseLong(parts[IDX_ELAPSED].trim());
+            timestamp = Long.parseLong(parts[timestampIndex].trim());
+            elapsed = Long.parseLong(parts[elapsedIndex].trim());
         } catch (NumberFormatException e) {
             skipBadLine(line, "timeStamp/elapsed 非数字");
             return;
         }
-        String successText = parts[IDX_SUCCESS].trim();
+        String successText = parts[successIndex].trim();
         if (!"true".equalsIgnoreCase(successText) && !"false".equalsIgnoreCase(successText)) {
             skipBadLine(line, "success 列非法: " + successText);
             return;
         }
         boolean success = "true".equalsIgnoreCase(successText);
-        String label = parts[IDX_LABEL].isBlank() ? "(unknown)" : parts[IDX_LABEL];
-        String responseCode = parts[IDX_RESPONSE_CODE];
-        long bytes = tryParseLong(parts, IDX_BYTES);
-        long sentBytes = tryParseLong(parts, IDX_SENT_BYTES);
-        int allThreads = (int) tryParseLong(parts, IDX_ALL_THREADS);
+        String label = parts[labelIndex].isBlank() ? "(unknown)" : parts[labelIndex];
+        String responseCode = valueAt(parts, responseCodeIndex);
+        long bytes = tryParseLong(parts, bytesIndex);
+        long sentBytes = tryParseLong(parts, sentBytesIndex);
+        int allThreads = (int) tryParseLong(parts, allThreadsIndex);
         sampleCount.incrementAndGet();
-        String failureMessage = parts.length > IDX_FAILURE_MESSAGE ? parts[IDX_FAILURE_MESSAGE] : "";
+        String failureMessage = valueAt(parts, failureMessageIndex);
         if (!success && windowErrors.size() < MAX_ERRORS_PER_WINDOW) {
             // 断言失败信息优先；无断言的 HTTP 错误（500/连接拒绝等）failureMessage 为空，回退 responseMessage 展示原因
-            String responseMessage = parts.length > IDX_RESPONSE_MESSAGE ? parts[IDX_RESPONSE_MESSAGE] : "";
+            String responseMessage = valueAt(parts, responseMessageIndex);
             String message = failureMessage.isBlank() ? responseMessage : failureMessage;
             windowErrors.add(new ErrorSample(label, responseCode, truncate(message, ERROR_MESSAGE_MAX), timestamp));
         }
@@ -362,7 +398,7 @@ public class JtlMetricsCollector {
     }
 
     /**
-     * 将样本聚合进窗口（必要时封上一窗）：windowStart = ts - ts % 10000；
+     * 将样本聚合进窗口（必要时封上一窗）：windowStart = ts - ts % windowMs；
      * 读到更晚窗口的样本即封当前窗；早于当前窗的乱序样本归入当前窗（避免重复封窗）。
      *
      * @param timestamp  样本时间戳（毫秒）
@@ -393,10 +429,11 @@ public class JtlMetricsCollector {
     /**
      * 超时封窗检查：JMeter 批量落盘存在延迟（样本时间戳可能落后文件写入 10s+），
      * 直接按"当前时间越过窗末尾"封窗会导致迟到样本重开同窗并覆盖已上报的完整窗口数据。
-     * 因此给一个完整窗口的迟到缓冲：窗末后再等 windowMs 才允许超时封窗。
+     * 因此窗末后再等待固定的迟到缓冲时间；该时间不随聚合窗口缩短，避免 3s 配置下过早封窗。
      */
     private void flushExpiredWindow() {
-        if (currentWindowStart >= 0 && System.currentTimeMillis() >= currentWindowStart + 2 * windowMs) {
+        if (currentWindowStart >= 0
+                && System.currentTimeMillis() >= currentWindowStart + windowMs + LATE_TOLERANCE_MS) {
             closeWindow(false);
         }
     }
@@ -435,24 +472,52 @@ public class JtlMetricsCollector {
      */
     private void dispatchReport(MetricsReport report) {
         try {
-            reportExecutor.execute(() -> {
-                try {
-                    reporter.accept(report);
-                } catch (AgentServerException e) {
-                    if (e.getCode() > 0) {
-                        log.warn("[Metrics] 任务 {} 窗口 {} 指标上报被服务端拒绝: code={}, message={}（不重试）",
-                                taskId, report.windowStart(), e.getCode(), e.getMessage());
-                    } else {
-                        log.debug("[Metrics] 任务 {} 窗口 {} 指标上报网络失败（静默容忍）: {}",
-                                taskId, report.windowStart(), e.getMessage());
-                    }
-                } catch (Throwable t) {
-                    log.debug("[Metrics] 任务 {} 窗口 {} 指标上报失败（静默容忍）: {}",
-                            taskId, report.windowStart(), t.getMessage());
-                }
-            });
+            reportExecutor.execute(() -> sendReportWithRetry(report));
         } catch (Throwable t) {
             log.warn("[Metrics] 任务 {} 上报线程池已关闭，丢弃窗口 {} 报告", taskId, report.windowStart());
+        }
+    }
+
+    /**
+     * 顺序上报单个窗口。网络类错误指数退避重试，服务端明确业务拒绝视为永久错误。
+     */
+    private void sendReportWithRetry(MetricsReport report) {
+        for (int attempt = 1; attempt <= REPORT_MAX_ATTEMPTS; attempt++) {
+            try {
+                reporter.accept(report);
+                return;
+            } catch (AgentServerException e) {
+                if (e.getCode() > 0) {
+                    log.error("[Metrics] 任务 {} 窗口 {} 指标上报被服务端拒绝: code={}, message={}",
+                            taskId, report.windowStart(), e.getCode(), e.getMessage());
+                    return;
+                }
+                if (!retryLater(report, attempt, e.getMessage())) {
+                    return;
+                }
+            } catch (Throwable t) {
+                if (!retryLater(report, attempt, t.getMessage())) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private boolean retryLater(MetricsReport report, int attempt, String message) {
+        if (attempt >= REPORT_MAX_ATTEMPTS) {
+            log.error("[Metrics] 任务 {} 窗口 {} 指标上报连续失败 {} 次，窗口未送达: {}",
+                    taskId, report.windowStart(), attempt, message);
+            return false;
+        }
+        long delay = REPORT_RETRY_BASE_MS << (attempt - 1);
+        log.warn("[Metrics] 任务 {} 窗口 {} 指标上报失败，第 {} 次重试将在 {}ms 后执行: {}",
+                taskId, report.windowStart(), attempt + 1, delay, message);
+        try {
+            Thread.sleep(delay);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -486,7 +551,7 @@ public class JtlMetricsCollector {
      * @return 解析值，失败返回 0
      */
     private static long tryParseLong(String[] parts, int index) {
-        if (index >= parts.length) {
+        if (index < 0 || index >= parts.length) {
             return 0;
         }
         try {
@@ -494,6 +559,14 @@ public class JtlMetricsCollector {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private int columnIndex(String name, int fallback) {
+        return columnIndexes.getOrDefault(name, fallback);
+    }
+
+    private static String valueAt(String[] parts, int index) {
+        return index < 0 || index >= parts.length ? "" : parts[index];
     }
 
     /**

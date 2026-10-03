@@ -115,7 +115,7 @@ public class TaskController {
     }
 
     /**
-     * 删除任务：仅终态（FINISHED/FAILED）或未启动（CREATED）任务可删，
+     * 删除任务：仅终态（FINISHED/FAILED/PARTIAL_FAILED/CANCELLED）或未启动（CREATED）任务可删，
      * 连同报告、指标快照、错误样本、脚本快照、节点明细一并清理
      *
      * @param id 任务ID
@@ -147,9 +147,11 @@ public class TaskController {
      * @return 实时指标（series/samplers/total）
      */
     @GetMapping("/{id}/metrics")
-    public R<TaskMetricsVO> metrics(@PathVariable Long id) {
+    public R<TaskMetricsVO> metrics(@PathVariable Long id,
+                                    @RequestParam(required = false) Long afterWindow,
+                                    @RequestParam(defaultValue = "true") boolean includeSummary) {
         taskService.requireTask(id);
-        return R.ok(metricService.taskMetrics(id));
+        return R.ok(metricService.taskMetrics(id, afterWindow, includeSummary));
     }
 
     /**

@@ -5,6 +5,11 @@ server:
 spring:
   application:
     name: per-server
+  task:
+    scheduling:
+      pool:
+        # 状态巡检、定时启动、数据清理使用独立调度线程，避免报告聚合阻塞全部调度任务
+        size: 4
   servlet:
     multipart:
       # M2 文件库/引擎包上传大小限制（引擎 zip 较大）
@@ -42,6 +47,6 @@ per:
     # 默认空（不引导），可通过环境变量 PER_ENGINE_BOOTSTRAP 指定
     bootstrap-file: ${PER_ENGINE_BOOTSTRAP:}
   report:
-    # 快照过期清理保留天数：每日 03:30 删除已结束任务（FINISHED/FAILED）超过该天数的
+    # 快照过期清理保留天数：每日 03:30 删除已结束任务超过该天数的
     # metric_snapshot 与 error_sample（test_report 固化报告不删）
     snapshot-retention-days: 90

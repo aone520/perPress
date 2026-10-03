@@ -1,6 +1,7 @@
 package com.per.server.service;
 
 import com.per.server.common.BizException;
+import com.per.server.common.TpsCapacity;
 import com.per.server.common.WeightSplitter;
 import com.per.server.dto.ScriptFormRequest;
 import com.per.server.dto.TaskCreateRequest;
@@ -23,12 +24,6 @@ public class FormScriptJmxBuilder {
 
     /** URL 解析失败时的兜底提示 */
     private static final String BAD_URL = "采样器 url 非法：";
-
-    /** TPS 类模式单节点线程数上限（该段 TPS×2 与 2000 取小） */
-    private static final int TPS_THREADS_CAP = 2000;
-
-    /** TPS 类模式线程冗余倍数（线程数 = TPS×2，保证打满目标吞吐） */
-    private static final int TPS_THREADS_RATIO = 2;
 
     /**
      * 渲染表单场景定义为 JMX 文本（CONCURRENT 默认形态）
@@ -75,14 +70,15 @@ public class FormScriptJmxBuilder {
                 int duration = config != null && config.getDurationSeconds() != null ? config.getDurationSeconds() : 300;
                 int tps = config != null && config.getTps() != null ? config.getTps() : 100;
                 int threads = config != null && config.getMaxThreads() != null
-                        ? config.getMaxThreads() : Math.min(tps * TPS_THREADS_RATIO, TPS_THREADS_CAP);
+                        ? config.getMaxThreads() : TpsCapacity.defaultThreads(tps,
+                        config == null ? null : config.getExpectedResponseMs());
                 // 启动爬坡时长可配（默认 10s）
                 int rampup = config != null && config.getRampupSeconds() != null ? config.getRampupSeconds() : 10;
                 appendPropertyThreadGroup(jmx, legacyDef, "tg0", threads, rampup, 0, duration);
                 jmx.append("      <hashTree>\n");
-                // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发
-                appendConstantThroughputTimer(jmx, "tg0", (long) tps * 60 / (double) threads);
-                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def, targetMode);
+                // 定时器仅挂首个采样器：每次业务迭代只限速一次，目标 TPS 表示完整串行业务链路 TPS
+                appendSamplers(jmx, samplers, legacyDef.getThinkTimeMs(), fileNames, def, targetMode,
+                        new TimerSpec("tg0", (long) tps * 60 / (double) threads));
                 jmx.append("      </hashTree>\n");
             }
             case "STEPPED" -> appendSteppedGroups(jmx, legacyDef, samplers, fileNames, config);
@@ -106,7 +102,7 @@ public class FormScriptJmxBuilder {
      * 多单元渲染：执行单元（串行组整体 / 并行组内单个接口）各自渲染独立 ThreadGroup（TG 间天然并行），
      * 压力总量按 weights 拆分到单元（余数补给占比大的单元），JMX 内嵌拆分后的绝对默认值：
      * - CONCURRENT：每单元 TG，tg{u}.threads = threads×权重
-     * - FIXED_TPS：每单元 TG + PreciseThroughputTimer，tg{u}.samplesPerPeriod = tps×2×权重（每2秒样本数）
+     * - FIXED_TPS：每单元 TG + 首采样器 ConstantThroughputTimer，目标吞吐按业务迭代 TPS×权重拆分
      * - STEPPED：每段×每单元 TG（prefix=tg{seg}x{u}），段值×权重后按单位渲染
      *
      * @param def       表单场景定义
@@ -138,13 +134,12 @@ public class FormScriptJmxBuilder {
                     String prefix = "tg" + u;
                     // 单元目标 TPS（向上取整）→ 线程数 = 单元TPS×2（上限 2000），保证打满该单元吞吐
                     int unitTps = (int) ((unitTpsPerMin[u] + 59) / 60);
-                    int threads = Math.max(1, Math.min(unitTps * TPS_THREADS_RATIO, TPS_THREADS_CAP));
+                    int threads = TpsCapacity.defaultThreads(unitTps, config.getExpectedResponseMs());
                     appendNamedPropertyThreadGroup(jmx, unitDisplayName(units.get(u), prefix), prefix,
                             threads, rampup, 0, duration);
                     jmx.append("      <hashTree>\n");
-                    // CTT 每线程限速（mode=0）：组吞吐 ÷ 组线程数，绝不超发（底线：TPS 压测不得超过配置值）
-                    appendConstantThroughputTimer(jmx, prefix, unitTpsPerMin[u] / (double) threads);
-                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode);
+                    appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode,
+                            new TimerSpec(prefix, unitTpsPerMin[u] / (double) threads));
                     jmx.append("      </hashTree>\n");
                 }
             }
@@ -161,16 +156,14 @@ public class FormScriptJmxBuilder {
                         String prefix = "tg" + s + "x" + u;
                         int value = Math.max(1, unitValues[u]);
                         int threads = tpsUnit
-                                ? Math.min(value * TPS_THREADS_RATIO, TPS_THREADS_CAP)
+                                ? TpsCapacity.defaultThreads(value, config.getExpectedResponseMs())
                                 : value;
                         appendNamedPropertyThreadGroup(jmx, unitDisplayName(units.get(u), prefix), prefix,
                                 threads, rampup, segment.getDelaySeconds(), segment.getDurationSeconds());
                         jmx.append("      <hashTree>\n");
-                        if (tpsUnit) {
-                            // TPS 阶梯段用 CTT（每线程独立限速）：无 PTT 延迟段补发爆发，各段互不干扰
-                            appendConstantThroughputTimer(jmx, prefix, (long) value * 60 / (double) threads);
-                        }
-                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode);
+                        TimerSpec timer = tpsUnit
+                                ? new TimerSpec(prefix, (long) value * 60 / (double) threads) : null;
+                        appendUnitSamplers(jmx, units.get(u), fileNames, def.getThinkTimeMs(), def, mode, timer);
                         jmx.append("      </hashTree>\n");
                     }
                 }
@@ -275,15 +268,22 @@ public class FormScriptJmxBuilder {
     private void appendUnitSamplers(StringBuilder jmx, ExecUnit unit,
                                     Map<Long, String> fileNames, Long thinkTimeMs,
                                     ScriptFormRequest.FormDef def, String mode) {
-        for (ScriptFormRequest.Sampler sampler : unit.samplers()) {
-            appendSampler(jmx, sampler, fileNames, globalConfig(def), fixedTpsMode(mode));
+        appendUnitSamplers(jmx, unit, fileNames, thinkTimeMs, def, mode, null);
+    }
+
+    private void appendUnitSamplers(StringBuilder jmx, ExecUnit unit,
+                                    Map<Long, String> fileNames, Long thinkTimeMs,
+                                    ScriptFormRequest.FormDef def, String mode, TimerSpec timer) {
+        for (int i = 0; i < unit.samplers().size(); i++) {
+            appendSampler(jmx, unit.samplers().get(i), fileNames, globalConfig(def), fixedTpsMode(mode),
+                    i == 0 ? timer : null);
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
 
     /**
      * STEPPED 堆叠线程组渲染：按阶梯表展开 N 段，
-     * 每段渲染独立 ThreadGroup（props 前缀 tg{i}）+ 子 hashTree（TPS 单位时含 PreciseThroughputTimer + 全部采样器副本）
+     * 每段渲染独立 ThreadGroup（props 前缀 tg{i}）+ 子 hashTree（TPS 单位时首采样器含 ConstantThroughputTimer）
      *
      * @param jmx       JMX 输出缓冲
      * @param def       表单场景定义
@@ -302,16 +302,14 @@ public class FormScriptJmxBuilder {
             SteppedPlan.Segment segment = segments.get(i);
             // TPS 单位：线程数 = 该段 TPS×2（上限 2000）；THREADS 单位：线程数 = 该段增量
             int threads = tpsUnit
-                    ? Math.min(segment.getValue() * TPS_THREADS_RATIO, TPS_THREADS_CAP)
+                    ? TpsCapacity.defaultThreads(segment.getValue(), config.getExpectedResponseMs())
                     : segment.getValue();
             appendPropertyThreadGroup(jmx, def, "tg" + i, threads, rampup,
                     segment.getDelaySeconds(), segment.getDurationSeconds());
             jmx.append("      <hashTree>\n");
-            if (tpsUnit) {
-                // TPS 阶梯段用 CTT：每线程独立限速（组吞吐÷组线程数），无补发爆发、各段独立叠加
-                appendConstantThroughputTimer(jmx, "tg" + i, (long) segment.getValue() * 60 / (double) threads);
-            }
-            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames, def, "STEPPED");
+            TimerSpec timer = tpsUnit
+                    ? new TimerSpec("tg" + i, (long) segment.getValue() * 60 / (double) threads) : null;
+            appendSamplers(jmx, samplers, def.getThinkTimeMs(), fileNames, def, "STEPPED", timer);
             jmx.append("      </hashTree>\n");
         }
     }
@@ -436,8 +434,15 @@ public class FormScriptJmxBuilder {
     private void appendSamplers(StringBuilder jmx, List<ScriptFormRequest.Sampler> samplers,
                                 Long thinkTimeMs, Map<Long, String> fileNames,
                                 ScriptFormRequest.FormDef def, String mode) {
-        for (ScriptFormRequest.Sampler sampler : samplers) {
-            appendSampler(jmx, sampler, fileNames, globalConfig(def), fixedTpsMode(mode));
+        appendSamplers(jmx, samplers, thinkTimeMs, fileNames, def, mode, null);
+    }
+
+    private void appendSamplers(StringBuilder jmx, List<ScriptFormRequest.Sampler> samplers,
+                                Long thinkTimeMs, Map<Long, String> fileNames,
+                                ScriptFormRequest.FormDef def, String mode, TimerSpec timer) {
+        for (int i = 0; i < samplers.size(); i++) {
+            appendSampler(jmx, samplers.get(i), fileNames, globalConfig(def), fixedTpsMode(mode),
+                    i == 0 ? timer : null);
         }
         appendThinkTime(jmx, thinkTimeMs);
     }
@@ -507,7 +512,7 @@ public class FormScriptJmxBuilder {
      */
     private void appendSampler(StringBuilder jmx, ScriptFormRequest.Sampler sampler,
                                Map<Long, String> fileNames, ScriptFormRequest.Config globalConfig,
-                               boolean funnelEnabled) {
+                               boolean funnelEnabled, TimerSpec timer) {
         String name = StringUtils.hasText(sampler.getName()) ? sampler.getName() : sampler.getUrl();
         if (sampler.getCsvRefs() != null) {
             for (ScriptFormRequest.CsvRef csvRef : sampler.getCsvRefs()) {
@@ -522,6 +527,9 @@ public class FormScriptJmxBuilder {
         }
         appendHttpSampler(jmx, name, sampler, globalConfig);
         jmx.append("      <hashTree>\n");
+        if (timer != null) {
+            appendConstantThroughputTimer(jmx, timer.prefix(), timer.perThreadSamplesPerMin());
+        }
         if (sampler.getHeaders() != null && !sampler.getHeaders().isEmpty()) {
             appendHeaderManager(jmx, sampler.getHeaders());
         }
@@ -571,6 +579,10 @@ public class FormScriptJmxBuilder {
      */
     private static boolean fixedTpsMode(String mode) {
         return "FIXED_TPS".equalsIgnoreCase(mode);
+    }
+
+    /** 首个采样器上的业务迭代限速配置。 */
+    private record TimerSpec(String prefix, double perThreadSamplesPerMin) {
     }
 
     /**

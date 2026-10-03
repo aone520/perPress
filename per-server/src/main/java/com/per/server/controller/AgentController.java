@@ -81,7 +81,7 @@ public class AgentController {
     }
 
     /**
-     * Agent 任务回执（READY/RUNNING/FINISHED/FAILED 阶段状态推进）
+     * Agent 任务回执（READY/RUNNING/FINISHED/STOPPED/FAILED 阶段状态推进）
      *
      * @param request 回执请求（taskId/nodeKey/phase/message）
      * @return 空数据成功响应

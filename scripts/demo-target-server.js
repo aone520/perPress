@@ -16,16 +16,22 @@
  *   GET  /api/error         按概率报错：默认 8% 返回 500（验证错误分析）
  *   GET  /api/metrics       被测服务自身统计（请求数/错误数/慢查询数）
  *
- * 混合压测场景接口（/api/mix/*，配合「混合场景」示例脚本）：
+ * 混合压测场景接口（/api/mix/*，配合「全场景」示例脚本）：
  *   串行主链路（引用 users.csv：username,password,sku；逐级提取传递）：
  *     POST /api/mix/login          20~40ms，body {username,password} → data.token/userId
  *     GET  /api/mix/product?sku=   10~30ms，头 Authorization: Bearer ${token} → data.price/stock
+ *     PUT  /api/mix/cart           3~10ms，头 token，body {sku,qty} → data.cartId
  *     POST /api/mix/order          30~80ms，头 token，body {sku,price} → data.orderId/amount
  *     POST /api/mix/pay            40~100ms，头 token，body {orderId,payChannel} → data.payNo
+ *     POST /api/mix/comment        5~15ms，头 token，body {orderId,content} → data.commentId
  *   并行浏览流量（引用 browse.txt：channel|city|keyword）：
  *     GET /api/mix/feed?channel=&city=      5~15ms
  *     GET /api/mix/recommend?city=&limit=   15~40ms
  *     GET /api/mix/search?keyword=&city=    20~50ms
+ *   并行写流量（头 Bearer ${apiToken}，UDV 预置合法格式凭证）：
+ *     PUT    /api/mix/profile                3~10ms，body {nickname,city}
+ *     POST   /api/mix/refund                 5~15ms，body {orderId,amount}
+ *     DELETE /api/mix/cart?sku=              3~10ms
  *   token 格式强校验（tk.<userId>.<16hex>）：上游提取器配置错误时后续接口立即 401，链路断裂可见
  *
  * 平台「脚本中心 → 表单创建」可直接填写这些 URL 进行压测，
@@ -279,6 +285,80 @@ const server = http.createServer(async (req, res) => {
       return reply(res, 400, { code: 400, msg: 'keyword required' });
     }
     return reply(res, 200, { code: 0, msg: 'ok', data: { keyword, city, hits: rand(1, 120) } });
+  }
+
+  // ==================== 混合场景写接口（高压量级，延迟 3~15ms） ====================
+
+  // 写链路 W1 加购（PUT）：token 校验，body {sku,qty} → cartId（串行链提取传递用）
+  if (path === '/api/mix/cart' && req.method === 'PUT') {
+    const token = bearerToken(req);
+    if (!token) {
+      stats.errors++;
+      return reply(res, 401, { code: 401, msg: 'missing or invalid bearer token' });
+    }
+    const body = parseJson(await readBody(req));
+    await sleep(rand(3, 10));
+    if (!body.sku) {
+      stats.errors++;
+      return reply(res, 400, { code: 400, msg: 'sku required' });
+    }
+    return reply(res, 200, { code: 0, msg: 'ok', data: { cartId: 'CT' + Date.now() + rand(100, 999), sku: body.sku, qty: body.qty || 1 } });
+  }
+
+  // 写链路 W2 删购（DELETE）：token 校验，sku 可选宽松参数（并行写组来自 TXT 参数）
+  if (path === '/api/mix/cart' && req.method === 'DELETE') {
+    const token = bearerToken(req);
+    if (!token) {
+      stats.errors++;
+      return reply(res, 401, { code: 401, msg: 'missing or invalid bearer token' });
+    }
+    const sku = url.searchParams.get('sku') || 'ANY';
+    await sleep(rand(3, 10));
+    return reply(res, 200, { code: 0, msg: 'ok', data: { removed: true, sku } });
+  }
+
+  // 写链路 W3 评论（POST）：token 校验，body {orderId,content} → commentId（串行链末端，漏斗打折目标）
+  if (path === '/api/mix/comment' && req.method === 'POST') {
+    const token = bearerToken(req);
+    if (!token) {
+      stats.errors++;
+      return reply(res, 401, { code: 401, msg: 'missing or invalid bearer token' });
+    }
+    const body = parseJson(await readBody(req));
+    await sleep(rand(5, 15));
+    if (!/^OD\d{12,}$/.test(String(body.orderId || ''))) {
+      stats.errors++;
+      return reply(res, 400, { code: 400, msg: 'invalid orderId (expect OD+timestamp)' });
+    }
+    return reply(res, 200, { code: 0, msg: 'ok', data: { commentId: 'CM' + Date.now() + rand(100, 999), content: (body.content || '').slice(0, 50) } });
+  }
+
+  // 写链路 W4 改资料（PUT）：token 校验，body {nickname,city}（并行写组，TXT 参数化）
+  if (path === '/api/mix/profile' && req.method === 'PUT') {
+    const token = bearerToken(req);
+    if (!token) {
+      stats.errors++;
+      return reply(res, 401, { code: 401, msg: 'missing or invalid bearer token' });
+    }
+    const body = parseJson(await readBody(req));
+    await sleep(rand(3, 10));
+    return reply(res, 200, { code: 0, msg: 'ok', data: { updated: true, nickname: body.nickname || 'anon', city: body.city || 'all' } });
+  }
+
+  // 写链路 W5 退款（POST）：token 校验，body {orderId,amount} → refundId（并行写组）
+  if (path === '/api/mix/refund' && req.method === 'POST') {
+    const token = bearerToken(req);
+    if (!token) {
+      stats.errors++;
+      return reply(res, 401, { code: 401, msg: 'missing or invalid bearer token' });
+    }
+    const body = parseJson(await readBody(req));
+    await sleep(rand(5, 15));
+    if (!body.orderId) {
+      stats.errors++;
+      return reply(res, 400, { code: 400, msg: 'orderId required' });
+    }
+    return reply(res, 200, { code: 0, msg: 'ok', data: { refundId: 'RF' + Date.now() + rand(100, 999), orderId: body.orderId, amount: body.amount || 0 } });
   }
 
   stats.errors++;

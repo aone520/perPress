@@ -49,7 +49,7 @@ public class TaskCreateRequest {
     /**
      * 压测模式参数（按模式取用不同字段，服务端按模式做完整性校验并给出中文错误）：
      * CONCURRENT：threads/rampupSeconds(默认60)/durationSeconds(默认300)；
-     * FIXED_TPS：tps/durationSeconds/maxThreads(可选，默认 min(tps*2,2000))；
+     * FIXED_TPS：tps/durationSeconds/expectedResponseMs/maxThreads(可选)；
      * STEPPED：unit(THREADS|TPS)/start/step/stepSeconds/peak/peakSeconds/rampupSeconds(默认30)
      */
     @Data
@@ -67,8 +67,11 @@ public class TaskCreateRequest {
         /** FIXED_TPS：目标吞吐（样本数/秒） */
         private Integer tps;
 
-        /** FIXED_TPS：线程数上限（可选，默认 min(tps*2,2000)） */
+        /** FIXED_TPS：线程数上限（可选；为空时按 TPS×预期RT×1.5 推导） */
         private Integer maxThreads;
+
+        /** TPS 模式预期单次业务迭代响应时间（毫秒，默认100），用于自动估算线程数 */
+        private Integer expectedResponseMs;
 
         /** STEPPED：阶梯单位（THREADS 按线程阶梯 / TPS 按吞吐阶梯） */
         private String unit;

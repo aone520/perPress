@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 压测任务实体：对应表 test_task，记录任务基本信息与状态机流转
- * 状态机：CREATED → PREPARING → RUNNING → STOPPING → FINISHED/FAILED
+ * 状态机：CREATED → PREPARING → RUNNING → STOPPING → FINISHED/FAILED/PARTIAL_FAILED/CANCELLED
  */
 @Data
 @TableName("test_task")
@@ -27,6 +27,10 @@ public class TestTask {
     public static final String STATUS_FINISHED = "FINISHED";
     /** 任务状态常量：失败 */
     public static final String STATUS_FAILED = "FAILED";
+    /** 任务状态常量：部分节点成功、部分节点失败 */
+    public static final String STATUS_PARTIAL_FAILED = "PARTIAL_FAILED";
+    /** 任务状态常量：用户主动停止 */
+    public static final String STATUS_CANCELLED = "CANCELLED";
 
     /** 触发方式常量：立即手动启动 */
     public static final String TRIGGER_MANUAL = "MANUAL";
@@ -62,8 +66,11 @@ public class TestTask {
     /** 文件分发策略 JSON：[{fileId,mode:SHARED|SPLIT}] */
     private String fileDispatchJson;
 
-    /** 任务状态：CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED */
+    /** 任务状态：CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED/PARTIAL_FAILED/CANCELLED */
     private String status;
+
+    /** 当前状态开始时间，用于服务重启后的超时恢复 */
+    private LocalDateTime statusTime;
 
     /** 触发方式：MANUAL 立即手动 / SCHEDULED 定时（数据库默认 MANUAL） */
     private String triggerType;

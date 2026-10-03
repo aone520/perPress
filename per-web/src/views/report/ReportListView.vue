@@ -1,6 +1,6 @@
 <!--
   报告中心列表页（路由 /reports）：
-  - 仅展示 FINISHED（已完成）任务的报告入口，复用任务分页接口（status=FINISHED）
+  - 展示正常完成、部分失败和主动取消任务的报告入口
   - 列：任务号 / 名称 / 模式 / 节点数 / 结束时间 / 操作「查看报告」跳转 /reports/{id}
   - 支持关键字搜索（回车/清空即查）与分页
 -->
@@ -38,6 +38,13 @@
         </el-table-column>
         <el-table-column label="节点数" width="90" align="center">
           <template #default="{ row }">{{ (row.nodeKeys || []).length }}</template>
+        </el-table-column>
+        <el-table-column label="结果" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'FINISHED'" type="success" size="small">完成</el-tag>
+            <el-tag v-else-if="row.status === 'PARTIAL_FAILED'" type="warning" size="small">部分失败</el-tag>
+            <el-tag v-else type="info" size="small">已取消</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="结束时间" width="180" align="center">
           <template #default="{ row }">{{ formatDateTime(row.endTime) }}</template>
@@ -85,12 +92,16 @@ const rows = ref([])
 const loading = ref(false)
 
 /**
- * 加载已完成任务列表（status=FINISHED）
+ * 加载已生成报告的终态任务列表
  */
 async function load() {
   loading.value = true
   try {
-    const params = { page: page.value, size: size.value, status: 'FINISHED' }
+    const params = {
+      page: page.value,
+      size: size.value,
+      status: 'FINISHED,PARTIAL_FAILED,CANCELLED'
+    }
     if (keyword.value && keyword.value.trim()) {
       params.keyword = keyword.value.trim()
     }

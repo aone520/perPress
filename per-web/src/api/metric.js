@@ -8,8 +8,8 @@ import http from './http'
  * @param {number|string} id 任务 ID
  * @returns {Promise<{code:number,message:string,data:Object}>} data 为 {series,samplers,total}
  */
-export function getTaskMetrics(id) {
-  return http.get(`/api/tasks/${id}/metrics`)
+export function getTaskMetrics(id, params = {}) {
+  return http.get(`/api/tasks/${id}/metrics`, { params })
 }
 
 /**
