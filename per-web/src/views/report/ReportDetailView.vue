@@ -165,7 +165,7 @@
               <div ref="nodeMemChartRef" class="chart-box" />
             </el-col>
             <el-col :span="8">
-              <div class="sub-title">网络带宽（Mbps，虚线为发送）</div>
+              <div class="sub-title">网络带宽（Mbps，收+发合计，悬浮看分解）</div>
               <div ref="nodeNetChartRef" class="chart-box" />
             </el-col>
           </el-row>
@@ -592,7 +592,8 @@ function renderNodeResCharts() {
 }
 
 /**
- * 渲染压力机网络带宽图（Mbps）：每节点两条线——接收（实线）与发送（虚线），同色区分节点
+ * 渲染压力机网络带宽图（Mbps）：每节点一条线 = 收+发合计，
+ * 收发分解保留在 tooltip 明细中（hover 查看），主线保持简洁
  */
 function renderNodeNetChart() {
   const rows = nodes.value.filter((row) => (row.resources || []).length)
@@ -601,18 +602,28 @@ function renderNodeNetChart() {
   }
   const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
   const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
-  const series = []
-  rows.forEach((row, i) => {
-    const color = palette[i % palette.length]
-    const label = nodeLabel(row)
-    series.push(chartLine(`${label} 收`, row.resources.map((p) => bpsToMbps(p.recvBps)), color))
-    series.push(chartLine(`${label} 发`, row.resources.map((p) => bpsToMbps(p.sentBps)), color,
-      { lineStyle: { width: 2, type: 'dashed' } }))
-  })
+  const series = rows.map((row, i) => chartLine(
+    nodeLabel(row),
+    row.resources.map((p) => bpsToMbps((Number(p.recvBps) || 0) + (Number(p.sentBps) || 0))),
+    palette[i % palette.length]
+  ))
   nodeNetChart.setOption(
     {
-      tooltip: chartTooltip(),
-      legend: chartLegend(series.map((s) => s.name)),
+      tooltip: {
+        ...chartTooltip(),
+        formatter: (params) => {
+          const idx = Array.isArray(params) ? params[0].dataIndex : params.dataIndex
+          const lines = [params[0].axisValueLabel]
+          rows.forEach((row) => {
+            const point = row.resources[Math.min(idx, row.resources.length - 1)] || {}
+            const recv = bpsToMbps(point.recvBps)
+            const sent = bpsToMbps(point.sentBps)
+            lines.push(`${nodeLabel(row)}：合计 ${bpsToMbps((Number(point.recvBps) || 0) + (Number(point.sentBps) || 0))} Mbps（收 ${recv} / 发 ${sent}）`)
+          })
+          return lines.join('<br/>')
+        }
+      },
+      legend: chartLegend(rows.map((row) => nodeLabel(row))),
       grid: CHART_GRID,
       xAxis: baseXAxis(longest.resources),
       yAxis: [{ ...chartValueAxis('Mbps') }],
