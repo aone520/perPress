@@ -5,7 +5,7 @@ import lombok.Data;
 import java.util.List;
 
 /**
- * Agent 指标上报请求 DTO：每 10 秒窗口一次，含采样器聚合快照与错误样本
+ * Agent 指标上报请求 DTO：按 Agent 配置窗口（默认 3 秒）上报采样器聚合快照与错误样本
  * （errors 每窗口最多传 10 条，Server 全任务累计保留前 200 条 error_sample）
  */
 @Data
@@ -17,7 +17,7 @@ public class AgentMetricsRequest {
     /** 上报节点标识 */
     private String nodeKey;
 
-    /** 窗口起点毫秒（对齐整 10s） */
+    /** 窗口起点毫秒（按 Agent 配置窗口对齐） */
     private Long windowStart;
 
     /** 窗口终点毫秒 */

@@ -42,6 +42,11 @@ public class MetricService {
     /** 全任务累计保留错误样本上限 */
     private static final int MAX_ERROR_SAMPLES_PER_TASK = 200;
 
+    /** error_sample 各文本列长度，与 schema.sql 保持一致 */
+    private static final int ERROR_SAMPLER_MAX_LENGTH = 256;
+    private static final int ERROR_RESPONSE_CODE_MAX_LENGTH = 255;
+    private static final int ERROR_MESSAGE_MAX_LENGTH = 1024;
+
     private final MetricSnapshotMapper snapshotMapper;
     private final ErrorSampleMapper errorSampleMapper;
     private final TaskNodeMapper taskNodeMapper;
@@ -93,13 +98,27 @@ public class MetricService {
      * @return 实时指标视图
      */
     public TaskMetricsVO taskMetrics(Long taskId) {
-        List<MetricSnapshot> snapshots = snapshots(taskId);
+        return taskMetrics(taskId, null, true);
+    }
+
+    /**
+     * 查询实时指标。afterWindow 非空时 series 仅返回该窗口之后的增量；
+     * includeSummary=false 时跳过全量 samplers/total 聚合，供高频轮询使用。
+     */
+    public TaskMetricsVO taskMetrics(Long taskId, Long afterWindow, boolean includeSummary) {
+        List<MetricSnapshot> incrementalSnapshots = snapshots(taskId, afterWindow);
         TaskMetricsVO vo = new TaskMetricsVO();
-        List<Map<String, Object>> series = seriesOf(snapshots);
+        List<Map<String, Object>> series = seriesOf(incrementalSnapshots);
         if (series.size() > MAX_SERIES_POINTS) {
             series = series.subList(series.size() - MAX_SERIES_POINTS, series.size());
         }
         vo.setSeries(series);
+        if (!includeSummary) {
+            vo.setSamplers(List.of());
+            vo.setTotal(null);
+            return vo;
+        }
+        List<MetricSnapshot> snapshots = afterWindow == null ? incrementalSnapshots : snapshots(taskId);
         vo.setSamplers(samplersSection(snapshots, false));
         Map<String, Object> total = new LinkedHashMap<>();
         long count = 0;
@@ -134,8 +153,16 @@ public class MetricService {
      * @return 快照列表（可能为空）
      */
     public List<MetricSnapshot> snapshots(Long taskId) {
-        return snapshotMapper.selectList(new LambdaQueryWrapper<MetricSnapshot>()
-                .eq(MetricSnapshot::getTaskId, taskId)
+        return snapshots(taskId, null);
+    }
+
+    public List<MetricSnapshot> snapshots(Long taskId, Long afterWindow) {
+        LambdaQueryWrapper<MetricSnapshot> wrapper = new LambdaQueryWrapper<MetricSnapshot>()
+                .eq(MetricSnapshot::getTaskId, taskId);
+        if (afterWindow != null) {
+            wrapper.gt(MetricSnapshot::getWindowStart, afterWindow);
+        }
+        return snapshotMapper.selectList(wrapper
                 .orderByAsc(MetricSnapshot::getWindowStart)
                 .orderByAsc(MetricSnapshot::getSampler));
     }
@@ -165,9 +192,9 @@ public class MetricService {
             point.put("tps", round2(windowSeconds <= 0 ? 0 : agg.count * 1.0 / windowSeconds));
             point.put("errorCount", agg.errorCount);
             point.put("avgMs", agg.avgMs());
-            point.put("p90", round2(MetricBuckets.percentile(agg.buckets, 90)));
-            point.put("p95", round2(MetricBuckets.percentile(agg.buckets, 95)));
-            point.put("p99", round2(MetricBuckets.percentile(agg.buckets, 99)));
+            point.put("p90", round2(agg.percentile(90)));
+            point.put("p95", round2(agg.percentile(95)));
+            point.put("p99", round2(agg.percentile(99)));
             point.put("threads", agg.activeThreads);
             point.put("recvKbps", round2(windowSeconds <= 0 ? 0 : agg.bytes * 1.0 / windowSeconds / 1024));
             series.add(point);
@@ -200,15 +227,15 @@ public class MetricService {
             row.put("avgMs", agg.avgMs());
             row.put("minMs", agg.minOrNull());
             row.put("maxMs", agg.maxOrNull());
-            row.put("p50", round2(MetricBuckets.percentile(agg.buckets, 50)));
+            row.put("p50", round2(agg.percentile(50)));
             if (withReportCols) {
-                row.put("p75", round2(MetricBuckets.percentile(agg.buckets, 75)));
+                row.put("p75", round2(agg.percentile(75)));
             }
-            row.put("p90", round2(MetricBuckets.percentile(agg.buckets, 90)));
-            row.put("p95", round2(MetricBuckets.percentile(agg.buckets, 95)));
-            row.put("p99", round2(MetricBuckets.percentile(agg.buckets, 99)));
+            row.put("p90", round2(agg.percentile(90)));
+            row.put("p95", round2(agg.percentile(95)));
+            row.put("p99", round2(agg.percentile(99)));
             if (withReportCols) {
-                row.put("p999", round2(MetricBuckets.percentile(agg.buckets, 99.9)));
+                row.put("p999", round2(agg.percentile(99.9)));
                 row.put("bytes", agg.bytes);
                 row.put("sentBytes", agg.sentBytes);
             }
@@ -379,9 +406,9 @@ public class MetricService {
             ErrorSample sample = new ErrorSample();
             sample.setTaskId(taskId);
             sample.setNodeKey(nodeKey);
-            sample.setSampler(item.getLabel());
-            sample.setResponseCode(item.getCode());
-            sample.setMessage(item.getMsg());
+            sample.setSampler(truncate(item.getLabel(), ERROR_SAMPLER_MAX_LENGTH));
+            sample.setResponseCode(truncate(item.getCode(), ERROR_RESPONSE_CODE_MAX_LENGTH));
+            sample.setMessage(truncate(item.getMsg(), ERROR_MESSAGE_MAX_LENGTH));
             sample.setTs(item.getTs());
             errorSampleMapper.insert(sample);
             saved++;
@@ -400,6 +427,16 @@ public class MetricService {
     }
 
     /**
+     * 将外部上报文本限制在数据库列长度内，null 保持 null，避免单条错误样本导致整窗指标接口 500。
+     */
+    static String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
+    }
+
+    /**
      * 数值保留两位小数
      *
      * @param value 原值
@@ -411,7 +448,7 @@ public class MetricService {
 
     /**
      * 快照聚合器：跨节点/窗口/采样器累加 count、bytes、桶计数等，
-     * min/max 取极值、activeThreads 取最大值，供指标查询与报告聚合共用
+     * min/max 取极值；activeThreads 对同一节点取最大值、跨节点求和，供指标查询与报告聚合共用
      */
     public static class Agg {
 
@@ -439,6 +476,9 @@ public class MetricService {
         /** 活跃线程数峰值 */
         public int activeThreads = 0;
 
+        /** 节点活跃线程峰值，用于避免同一节点多个 sampler 重复累加 */
+        private final Map<String, Integer> activeThreadsByNode = new LinkedHashMap<>();
+
         /** 窗口时长（毫秒，首条快照记录 end-start；0 表示未知） */
         public long windowMs = 0;
 
@@ -462,8 +502,13 @@ public class MetricService {
             if (s.getMaxMs() != null && s.getMaxMs() > maxMs) {
                 maxMs = s.getMaxMs();
             }
-            if (s.getActiveThreads() != null && s.getActiveThreads() > activeThreads) {
-                activeThreads = s.getActiveThreads();
+            if (s.getActiveThreads() != null) {
+                if (StringUtils.hasText(s.getNodeKey())) {
+                    activeThreadsByNode.merge(s.getNodeKey(), s.getActiveThreads(), Math::max);
+                    activeThreads = activeThreadsByNode.values().stream().mapToInt(Integer::intValue).sum();
+                } else if (s.getActiveThreads() > activeThreads) {
+                    activeThreads = s.getActiveThreads();
+                }
             }
             if (windowMs <= 0 && s.getWindowStart() != null && s.getWindowEnd() != null
                     && s.getWindowEnd() > s.getWindowStart()) {
@@ -488,6 +533,21 @@ public class MetricService {
          */
         public double avgMs() {
             return count <= 0 ? 0 : Math.round(sumMs * 100.0 / count) / 100.0;
+        }
+
+        /**
+         * 基于直方图估算分位数，并以真实观测最大值封顶。
+         * 桶内线性插值可能落在桶上界附近，而该桶的真实样本最大值更小；
+         * 不封顶会出现 p99/p999 大于 max 的不可能结果。
+         *
+         * @param p 分位点（0-100）
+         * @return 分位数毫秒值；无样本返回 0
+         */
+        public double percentile(double p) {
+            if (count <= 0) {
+                return 0;
+            }
+            return Math.min(maxMs, MetricBuckets.percentile(buckets, p));
         }
 
         /**

@@ -8,7 +8,7 @@ import java.util.Map;
  * 属性需在 PREPARE 时落盘、START 时读取复用）。
  *
  * @param taskId      任务 ID
- * @param status      状态（PREPARED/RUNNING/FINISHED/FAILED）
+ * @param status      状态（PREPARED/RUNNING/FINISHED/STOPPED/FAILED）
  * @param startedAt   JMeter 进程启动时间戳（毫秒，未启动为 null）
  * @param endedAt     进程结束时间戳（毫秒，未结束为 null）
  * @param jmeterProps PREPARE 下发的 JMeter 属性透传表
@@ -28,8 +28,11 @@ public record TaskState(
     /** 状态：JMeter 进程运行中 */
     public static final String STATUS_RUNNING = "RUNNING";
 
-    /** 状态：已结束（正常完成或被停止） */
+    /** 状态：正常完成 */
     public static final String STATUS_FINISHED = "FINISHED";
+
+    /** 状态：收到停止指令后结束 */
+    public static final String STATUS_STOPPED = "STOPPED";
 
     /** 状态：失败（准备失败/启动失败/运行异常退出） */
     public static final String STATUS_FAILED = "FAILED";

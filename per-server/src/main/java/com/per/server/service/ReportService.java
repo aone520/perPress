@@ -719,12 +719,12 @@ public class ReportService {
         Map<String, Object> rt = new LinkedHashMap<>();
         rt.put("min", total.minOrNull());
         rt.put("avg", total.avgMs());
-        rt.put("p50", round2(MetricBuckets.percentile(total.buckets, 50)));
-        rt.put("p75", round2(MetricBuckets.percentile(total.buckets, 75)));
-        rt.put("p90", round2(MetricBuckets.percentile(total.buckets, 90)));
-        rt.put("p95", round2(MetricBuckets.percentile(total.buckets, 95)));
-        rt.put("p99", round2(MetricBuckets.percentile(total.buckets, 99)));
-        rt.put("p999", round2(MetricBuckets.percentile(total.buckets, 99.9)));
+        rt.put("p50", round2(total.percentile(50)));
+        rt.put("p75", round2(total.percentile(75)));
+        rt.put("p90", round2(total.percentile(90)));
+        rt.put("p95", round2(total.percentile(95)));
+        rt.put("p99", round2(total.percentile(99)));
+        rt.put("p999", round2(total.percentile(99.9)));
         rt.put("max", total.maxOrNull());
 
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -745,7 +745,9 @@ public class ReportService {
                 .max(Double::compare).orElse(0.0));
         summary.put("recvTotalKB", round2(total.bytes / 1024.0));
         summary.put("sentTotalKB", round2(total.sentBytes / 1024.0));
-        summary.put("peakThreads", total.activeThreads);
+        summary.put("peakThreads", series.stream()
+                .map(p -> toDouble(p.get("threads")))
+                .max(Double::compare).orElse(0.0));
         // APDEX 满意度指数（行业标准，JMeter Dashboard 首屏指标；阈值 500/1500ms）
         summary.put("apdex", MetricBuckets.apdex(total.buckets,
                 MetricService.APDEX_SATISFIED_MS, MetricService.APDEX_TOLERATING_MS));
@@ -773,8 +775,8 @@ public class ReportService {
             row.put("errorCount", agg.errorCount);
             row.put("tps", round2(agg.count * 1.0 / durationSeconds));
             row.put("avgMs", agg.avgMs());
-            row.put("p95", round2(MetricBuckets.percentile(agg.buckets, 95)));
-            row.put("p99", round2(MetricBuckets.percentile(agg.buckets, 99)));
+            row.put("p95", round2(agg.percentile(95)));
+            row.put("p99", round2(agg.percentile(99)));
             row.put("bytes", agg.bytes);
             appendNodeResources(row, resourceByNode.get(nodeKey));
             nodes.add(row);

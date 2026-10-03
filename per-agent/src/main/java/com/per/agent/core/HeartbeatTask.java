@@ -39,6 +39,7 @@ public class HeartbeatTask {
     private final SystemResourceCollector resourceCollector;
     private final EngineManager engineManager;
     private final TaskExecutor taskExecutor;
+    private final ServerClock serverClock;
 
     /** 连续失败计数（成功后清零） */
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
@@ -75,8 +76,9 @@ public class HeartbeatTask {
                 netBps[1],
                 engineManager.getDeployedVersion(),
                 AgentVersion.VERSION);
+        long requestStartedAt = System.currentTimeMillis();
         HeartbeatResponse response = serverClient.heartbeat(request);
-        handleSuccess(response);
+        handleSuccess(response, requestStartedAt, System.currentTimeMillis());
     }
 
     /**
@@ -84,13 +86,19 @@ public class HeartbeatTask {
      *
      * @param response 心跳响应
      */
-    private void handleSuccess(HeartbeatResponse response) {
+    private void handleSuccess(HeartbeatResponse response, long requestStartedAt, long responseReceivedAt) {
         int failed = consecutiveFailures.getAndSet(0);
         if (failed > 0) {
             log.info("[Heartbeat] 失联恢复：此前连续失败 {} 次，心跳已恢复正常", failed);
         }
         if (response != null && response.serverTime() != null) {
-            log.debug("[Heartbeat] 心跳成功，serverTime={}", response.serverTime());
+            serverClock.update(response.serverTime(), requestStartedAt, responseReceivedAt);
+            long offset = serverClock.offsetMs();
+            if (Math.abs(offset) > 1_000) {
+                log.warn("[Heartbeat] 本机与服务端时钟偏差 {}ms，已使用服务端偏移进行同步起跑", offset);
+            } else {
+                log.debug("[Heartbeat] 心跳成功，时钟偏差={}ms", offset);
+            }
         }
         engineManager.ensureEngine(response == null ? null : response.engine());
     }

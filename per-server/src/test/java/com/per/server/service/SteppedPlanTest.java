@@ -125,24 +125,23 @@ class SteppedPlanTest {
 
     /**
      * 验证 STEPPED-TPS 的 JMX 形态：每段堆叠 TG 线程数=段TPS×2（上限2000）并挂
-     * PreciseThroughputTimer（throughput=tg{i}.tpsPerMin，samples/min；段0=600、段9=600）
+     * ConstantThroughputTimer（挂首个采样器，每次业务迭代只限速一次）
      */
     @Test
     void testSteppedTpsJmx() {
         String jmx = new FormScriptJmxBuilder()
                 .buildWithMode(minimalDef(), Map.of(), "STEPPED", steppedConfig("TPS"));
-        assertTrue(jmx.contains("${__P(tg0.threads,20)}"));
-        assertTrue(jmx.contains("${__P(tg9.threads,20)}"));
-        assertTrue(jmx.contains("<PreciseThroughputTimer guiclass=\"TestBeanGUI\" testclass=\"PreciseThroughputTimer\""));
-        assertTrue(jmx.contains("${__P(tg0.tpsPerMin,600)}"));
-        assertTrue(jmx.contains("${__P(tg9.tpsPerMin,600)}"));
-        assertTrue(jmx.contains("<stringProp name=\"throughputPeriod\">60</stringProp>"));
-        assertTrue(jmx.contains("<boolProp name=\"exactPreciseThroughput\">true</boolProp>"));
+        assertTrue(jmx.contains("${__P(tg0.threads,2)}"));
+        assertTrue(jmx.contains("${__P(tg9.threads,2)}"));
+        assertTrue(jmx.contains("<ConstantThroughputTimer guiclass=\"TestBeanGUI\" testclass=\"ConstantThroughputTimer\""));
+        assertTrue(jmx.contains("${__P(tg0.perThreadPerMin,300.0)}"));
+        assertTrue(jmx.contains("${__P(tg9.perThreadPerMin,300.0)}"));
+        assertTrue(jmx.contains("<intProp name=\"calcMode\">0</intProp>"));
     }
 
     /**
-     * 验证 FIXED_TPS 的 JMX 形态：单属性化线程组 + PTT，
-     * 线程默认 min(tps*2,2000)、throughput 默认 tps*60
+     * 验证 FIXED_TPS 的 JMX 形态：单属性化线程组 + 首采样器 CTT，
+     * 线程默认按 TPS 与预期响应时间估算、throughput 默认 tps*60
      */
     @Test
     void testFixedTpsJmx() {
@@ -151,11 +150,11 @@ class SteppedPlanTest {
         config.setDurationSeconds(120);
         String jmx = new FormScriptJmxBuilder()
                 .buildWithMode(minimalDef(), Map.of(), "FIXED_TPS", config);
-        // 1500*2=3000 超上限，取 2000
-        assertTrue(jmx.contains("${__P(tg0.threads,2000)}"));
+        // 默认预期RT=100ms并预留50%：1500×0.1×1.5=225
+        assertTrue(jmx.contains("${__P(tg0.threads,225)}"));
         assertTrue(jmx.contains("${__P(tg0.duration,120)}"));
-        assertTrue(jmx.contains("${__P(tg0.tpsPerMin,90000)}"));
-        assertTrue(jmx.contains("PreciseThroughputTimer"));
+        assertTrue(jmx.contains("${__P(tg0.perThreadPerMin,400.0)}"));
+        assertTrue(jmx.contains("ConstantThroughputTimer"));
         // 采样器仍在（单 TG 挂全部采样器）
         assertTrue(jmx.contains("HTTPSamplerProxy"));
     }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.per.agent.client.MetricsReport;
+import com.per.agent.client.AgentServerException;
 import com.per.agent.client.MetricsReport.SamplerMetrics;
 import com.per.agent.common.Jsons;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -27,7 +29,7 @@ class JtlMetricsCollectorTest {
             + "dataType,success,failureMessage,bytes,sentBytes,grpThreads,allThreads,URL,Latency,IdleTime,Connect";
 
     /** 窗口长度（毫秒），与实现保持一致 */
-    private static final long WINDOW_MS = 10_000L;
+    private static final long WINDOW_MS = 3_000L;
 
     @TempDir
     Path tempDir;
@@ -69,7 +71,7 @@ class JtlMetricsCollectorTest {
         assertTrue(report.finished(), "尾窗报告 finished 应为 true");
         assertEquals(9L, report.taskId());
         assertEquals("node-test", report.nodeKey());
-        assertEquals(windowStart, report.windowStart(), "窗口起点应整 10 秒对齐");
+        assertEquals(windowStart, report.windowStart(), "窗口起点应按 3 秒对齐");
         assertEquals(windowStart + WINDOW_MS, report.windowEnd());
         assertEquals(2, report.samplers().size(), "两个 label 各一条聚合");
 
@@ -145,6 +147,31 @@ class JtlMetricsCollectorTest {
         reports.forEach(r -> System.out.println(Jsons.write(r)));
     }
 
+    @Test
+    void compactHeaderAndNetworkRetryAreSupported() throws Exception {
+        Path jtl = tempDir.resolve("compact-result.jtl");
+        long windowStart = align(System.currentTimeMillis());
+        String compactHeader = "timeStamp,elapsed,label,responseCode,responseMessage,success,failureMessage,"
+                + "bytes,sentBytes,grpThreads,allThreads";
+        String compactRow = windowStart + ",12,login,200,OK,true,,128,32,4,8";
+        Files.write(jtl, List.of(compactHeader, compactRow), StandardCharsets.UTF_8);
+
+        AtomicInteger attempts = new AtomicInteger();
+        List<MetricsReport> reports = Collections.synchronizedList(new ArrayList<>());
+        JtlMetricsCollector collector = new JtlMetricsCollector(11L, "node-test", jtl, report -> {
+            if (attempts.incrementAndGet() < 3) {
+                throw new AgentServerException(-1, "temporary network failure");
+            }
+            reports.add(report);
+        });
+        collector.collectOnce();
+        collector.stopAndFlush();
+
+        assertEquals(3, attempts.get(), "网络失败后应重试直至成功");
+        assertEquals(1, reports.size());
+        assertEquals(8, reports.get(0).samplers().get(0).activeThreads());
+    }
+
     /**
      * 按标签查找窗口聚合项。
      *
@@ -174,7 +201,7 @@ class JtlMetricsCollectorTest {
     }
 
     /**
-     * 时间戳对齐到整 10 秒窗口起点（与实现一致）。
+     * 时间戳对齐到 3 秒窗口起点（与实现一致）。
      *
      * @param ts 时间戳（毫秒）
      * @return 窗口起点

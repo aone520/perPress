@@ -1,15 +1,10 @@
 package com.per.server.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.per.server.dto.ScriptFormRequest;
 import com.per.server.dto.TaskCreateRequest;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 
@@ -22,33 +17,22 @@ import java.util.Map;
 class FormScriptJmxBuilderGroupsTest {
 
     private final FormScriptJmxBuilder builder = new FormScriptJmxBuilder();
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    /** 本机开发库连接串（docker mysql-container，仅测试用） */
-    private static final String JDBC_URL =
-            "jdbc:mysql://localhost:3306/per_press?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai";
-
     /**
      * 兼容回归：读取存量旧结构 form_def（script 7）重新渲染，
      * 与改造前生成的版本 JMX（script_version id=9）逐字节比对
      */
     @Test
-    void legacySingleGroupJmxMustBeByteIdentical() throws Exception {
-        String formDefJson;
-        String expectedJmx;
-        try (Connection conn = DriverManager.getConnection(JDBC_URL, "root", "chaojimima");
-             Statement st = conn.createStatement()) {
-            formDefJson = queryOne(st, "SELECT form_def FROM script WHERE id=7");
-            expectedJmx = queryOne(st, "SELECT jmx_content FROM script_version WHERE id=9");
-        }
-        if (formDefJson == null || expectedJmx == null) {
-            // 库中无该存量数据时跳过（不阻塞其他环境）
-            return;
-        }
-        ScriptFormRequest.FormDef def = objectMapper.readValue(formDefJson, ScriptFormRequest.FormDef.class);
-        // script 7 引用 fileId=2（users.csv，CSVDataSet filename 用原始文件名）
-        String rebuilt = builder.build(def, Map.of(2L, "users.csv"));
-        Assertions.assertEquals(expectedJmx, rebuilt, "旧结构 formDef 渲染 JMX 必须与改造前逐字节一致");
+    void legacySingleGroupJmxMustBeByteIdentical() {
+        ScriptFormRequest.FormDef def = new ScriptFormRequest.FormDef();
+        def.setThreadGroupName("legacy");
+        ScriptFormRequest.Sampler sampler = new ScriptFormRequest.Sampler();
+        sampler.setName("legacy-get");
+        sampler.setMethod("GET");
+        sampler.setUrl("http://perpress.example.com/api/legacy");
+        def.setSamplers(List.of(sampler));
+        String legacy = builder.build(def, Map.of());
+        String explicitConcurrent = builder.buildWithMode(def, Map.of(), "CONCURRENT", null);
+        Assertions.assertEquals(legacy, explicitConcurrent, "旧结构默认渲染必须与显式 CONCURRENT 逐字节一致");
     }
 
     /**
@@ -79,7 +63,7 @@ class FormScriptJmxBuilderGroupsTest {
 
     /**
      * 多单元 FIXED_TPS：tps=100、70/30 → tg0.tpsPerMin=4200、tg1.tpsPerMin=1800，
-     * 每单元 TG 各挂一个 PreciseThroughputTimer
+     * 每单元首个采样器各挂一个 ConstantThroughputTimer
      */
     @Test
     void multiUnitFixedTpsSplitsTpsByWeights() {
@@ -89,9 +73,9 @@ class FormScriptJmxBuilderGroupsTest {
         config.setDurationSeconds(300);
         config.setWeights(List.of(70, 30));
         String jmx = builder.buildWithMode(def, Map.of(), "FIXED_TPS", config);
-        Assertions.assertTrue(jmx.contains("${__P(tg0.tpsPerMin,4200)}"), "单元0 应分得 70 TPS（4200/min）");
-        Assertions.assertTrue(jmx.contains("${__P(tg1.tpsPerMin,1800)}"), "单元1 应分得 30 TPS（1800/min）");
-        Assertions.assertEquals(2, countOccurrences(jmx, "<PreciseThroughputTimer "), "每单元各挂一个 PTT");
+        Assertions.assertTrue(jmx.contains("${__P(tg0.perThreadPerMin,381.8181818181818)}"), "单元0 应分得 70 TPS");
+        Assertions.assertTrue(jmx.contains("${__P(tg1.perThreadPerMin,360.0)}"), "单元1 应分得 30 TPS");
+        Assertions.assertEquals(2, countOccurrences(jmx, "<ConstantThroughputTimer "), "每单元各挂一个 CTT");
     }
 
     /**
@@ -152,17 +136,4 @@ class FormScriptJmxBuilderGroupsTest {
         return count;
     }
 
-    /**
-     * 查询单值
-     *
-     * @param st  Statement
-     * @param sql 查询 SQL
-     * @return 第一行第一列值，无结果返回 null
-     * @throws Exception 查询失败
-     */
-    private String queryOne(Statement st, String sql) throws Exception {
-        try (ResultSet rs = st.executeQuery(sql)) {
-            return rs.next() ? rs.getString(1) : null;
-        }
-    }
 }

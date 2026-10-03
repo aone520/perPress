@@ -1,6 +1,5 @@
 package com.per.server.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -9,9 +8,20 @@ import lombok.NoArgsConstructor;
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class AgentTaskCommandVO {
 
     /** 任务ID */
     private Long taskId;
+
+    /** START 指令统一起跑时间（服务端 epoch 毫秒；STOP 可空） */
+    private Long startAt;
+
+    public AgentTaskCommandVO(Long taskId) {
+        this.taskId = taskId;
+    }
+
+    public AgentTaskCommandVO(Long taskId, Long startAt) {
+        this.taskId = taskId;
+        this.startAt = startAt;
+    }
 }

@@ -79,7 +79,7 @@ public class ServerClient {
 
     /**
      * 发送任务回执：POST /agent/task/receipt，body {taskId,nodeKey,phase,message}，
-     * phase 取值 READY/RUNNING/FINISHED/FAILED。
+     * phase 取值 READY/RUNNING/FINISHED/STOPPED/FAILED。
      *
      * @param receipt 回执请求体
      */

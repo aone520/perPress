@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.per.server.common.BizException;
 import com.per.server.common.JmxThreadGroupParser;
+import com.per.server.common.TpsCapacity;
 import com.per.server.common.UserContext;
 import com.per.server.common.WeightSplitter;
 import com.per.server.dto.PageVO;
@@ -41,9 +42,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -74,6 +78,10 @@ public class TaskService {
     /** 支持的压测模式集合 */
     private static final Set<String> MODES = Set.of("CONCURRENT", "FIXED_TPS", "STEPPED");
 
+    /** 启动前压力机资源保护阈值 */
+    private static final double START_MAX_CPU_PERCENT = 85.0;
+    private static final double START_MAX_MEMORY_PERCENT = 90.0;
+
     private final TestTaskMapper taskMapper;
     private final TaskNodeMapper taskNodeMapper;
     private final NodeMapper nodeMapper;
@@ -103,7 +111,7 @@ public class TaskService {
         }
         LocalDateTime parsed;
         try {
-            parsed = LocalDateTime.parse(scheduledStartTime.trim(), TASK_NO_DATE);
+            parsed = parseScheduledStartTime(scheduledStartTime);
         } catch (DateTimeParseException e) {
             throw new BizException("定时启动时间格式非法，应为 yyyy-MM-dd HH:mm:ss");
         }
@@ -112,6 +120,10 @@ public class TaskService {
         }
         task.setTriggerType(TestTask.TRIGGER_SCHEDULED);
         task.setScheduledStartTime(parsed);
+    }
+
+    static LocalDateTime parseScheduledStartTime(String text) {
+        return LocalDateTime.parse(text.trim(), SCHEDULED_TIME);
     }
 
     /**
@@ -134,6 +146,7 @@ public class TaskService {
         task.setNodeKeys(String.join(",", prepared.nodeKeys()));
         task.setFileDispatchJson(prepared.fileDispatch() == null ? null : writeJson(prepared.fileDispatch()));
         task.setStatus(TestTask.STATUS_CREATED);
+        task.setStatusTime(LocalDateTime.now());
         applyScheduleOnCreate(task, request.getScheduledStartTime());
         task.setCreateBy(currentUsername());
         taskMapper.insert(task);
@@ -361,6 +374,12 @@ public class TaskService {
      * @param task 编辑前的任务实体
      */
     private void deleteNodesSnapshotAndShards(TestTask task) {
+        deleteTaskShardFiles(task);
+        taskNodeMapper.delete(new LambdaQueryWrapper<TaskNode>().eq(TaskNode::getTaskId, task.getId()));
+        taskScriptSnapshotMapper.deleteById(task.getId());
+    }
+
+    private void deleteTaskShardFiles(TestTask task) {
         Long oldNodeCount = taskNodeMapper.selectCount(new LambdaQueryWrapper<TaskNode>()
                 .eq(TaskNode::getTaskId, task.getId()));
         JsonNode dispatch = readTree(task.getFileDispatchJson());
@@ -379,8 +398,6 @@ public class TaskService {
                 }
             }
         }
-        taskNodeMapper.delete(new LambdaQueryWrapper<TaskNode>().eq(TaskNode::getTaskId, task.getId()));
-        taskScriptSnapshotMapper.deleteById(task.getId());
     }
 
     /**
@@ -438,6 +455,7 @@ public class TaskService {
                 if (config.getMaxThreads() != null && config.getMaxThreads() < 1) {
                     throw new BizException("maxThreads必须大于0");
                 }
+                validateExpectedResponseMs(config);
             }
             case "STEPPED" -> {
                 if (!"THREADS".equals(config.getUnit()) && !"TPS".equals(config.getUnit())) {
@@ -470,6 +488,9 @@ public class TaskService {
                 if (config.getRampupSeconds() != null && config.getRampupSeconds() < 0) {
                     throw new BizException("rampupSeconds不能为负数");
                 }
+                if ("TPS".equals(config.getUnit())) {
+                    validateExpectedResponseMs(config);
+                }
             }
             default -> throw new BizException("压测模式仅支持 CONCURRENT/FIXED_TPS/STEPPED");
         }
@@ -480,8 +501,8 @@ public class TaskService {
      * - 单单元（导入脚本/无编排的表单脚本）：沿用既有均分逻辑（见 buildNodePropsLegacy）
      * - 多单元（表单脚本编排了并行接口/多组）：压力总量先按占比拆到执行单元（余数补给占比大的单元），
      *   再按节点均分（share/shareLong，余数补前几台，每台最小 1）：
-     *   CONCURRENT → tg{u}.threads；FIXED_TPS → tg{u}.threads/tg{u}.samplesPerPeriod（每2秒样本数）；
-     *   STEPPED → 每段×每单元 tg{seg}x{u}.*（TPS 单位线程=段值×2 上限 2000）
+     *   CONCURRENT → tg{u}.threads；FIXED_TPS → tg{u}.threads/tg{u}.perThreadPerMin；
+     *   STEPPED → 每段×每单元 tg{seg}x{u}.*（TPS 单位按目标响应时间估算线程并配置每线程吞吐）
      *
      * @param mode      压测模式
      * @param config    模式参数
@@ -514,7 +535,7 @@ public class TaskService {
             }
             case "FIXED_TPS" -> {
                 int maxThreads = config.getMaxThreads() == null
-                        ? Math.min(config.getTps() * 2, 2000) : config.getMaxThreads();
+                        ? TpsCapacity.defaultThreads(config.getTps(), config.getExpectedResponseMs()) : config.getMaxThreads();
                 // 启动爬坡时长可配（默认 10s，与 JMX 渲染默认一致）
                 int rampup = config.getRampupSeconds() == null ? 10 : config.getRampupSeconds();
                 // CTT 吞吐属性为 samples/min（tps×60），节点均分
@@ -551,7 +572,8 @@ public class TaskService {
                             props.put(prefix + ".delay", segment.getDelaySeconds());
                             props.put(prefix + ".duration", segment.getDurationSeconds());
                             if (tpsUnit) {
-                                int nodeThreads = share(Math.min(Math.max(1, unitValues[u]) * 2, 2000), nodeCount, i);
+                                int nodeThreads = share(TpsCapacity.defaultThreads(
+                                        Math.max(1, unitValues[u]), config.getExpectedResponseMs()), nodeCount, i);
                                 props.put(prefix + ".threads", nodeThreads);
                                 // CTT 每线程限速（mode=0）：节点段吞吐(samples/min) ÷ 节点线程数，各段独立
                                 props.put(prefix + ".perThreadPerMin",
@@ -571,11 +593,11 @@ public class TaskService {
     }
 
     /**
-     * 单单元（导入脚本/无编排表单脚本）节点 props 生成：沿用改造前均分逻辑：
+     * 单单元（导入脚本/无编排表单脚本）节点 props 生成：
      * - CONCURRENT：{threads（均分）, rampup, duration}；
-     * - FIXED_TPS：{tg0.threads（均分 maxThreads，默认 min(tps*2,2000)）, tg0.rampup=60,
-     *   tg0.duration, tg0.samplesPerPeriod=tps*2(每2秒) 均分}；
-     * - STEPPED：每段 {tg{i}.threads 或 tg{i}.samplesPerPeriod（TPS 单位线程=段TPS*2 上限2000, 吞吐=段TPS*2样本/2s）,
+     * - FIXED_TPS：{tg0.threads（按 TPS 与预期响应时间估算后均分）, tg0.rampup=60,
+     *   tg0.duration, tg0.perThreadPerMin（按节点目标 TPS 换算）}；
+     * - STEPPED：每段 {tg{i}.threads 或 tg{i}.perThreadPerMin（TPS 单位按段目标 TPS 与预期响应时间估算）,
      *   tg{i}.rampup（默认30）, tg{i}.delay, tg{i}.duration}
      *
      * @param mode      压测模式
@@ -599,7 +621,7 @@ public class TaskService {
             }
             case "FIXED_TPS" -> {
                 int maxThreads = config.getMaxThreads() == null
-                        ? Math.min(config.getTps() * 2, 2000) : config.getMaxThreads();
+                        ? TpsCapacity.defaultThreads(config.getTps(), config.getExpectedResponseMs()) : config.getMaxThreads();
                 // 启动爬坡时长可配（默认 10s，与 JMX 渲染默认一致）
                 int rampup = config.getRampupSeconds() == null ? 10 : config.getRampupSeconds();
                 // CTT 吞吐属性为 samples/min（tps×60），节点均分
@@ -628,7 +650,8 @@ public class TaskService {
                         props.put("tg" + s + ".delay", segment.getDelaySeconds());
                         props.put("tg" + s + ".duration", segment.getDurationSeconds());
                         if (tpsUnit) {
-                            int nodeThreads = share(Math.min(segment.getValue() * 2, 2000), nodeCount, i);
+                            int nodeThreads = share(TpsCapacity.defaultThreads(
+                                    segment.getValue(), config.getExpectedResponseMs()), nodeCount, i);
                             props.put("tg" + s + ".threads", nodeThreads);
                             // CTT 每线程限速（mode=0）：节点段吞吐 ÷ 节点线程数
                             props.put("tg" + s + ".perThreadPerMin",
@@ -752,7 +775,7 @@ public class TaskService {
                                 + "，总 TPS 需 ≥ " + minTotal(nodeCount, weights[u]));
                     }
                     int maxThreads = config.getMaxThreads() == null
-                            ? Math.min(config.getTps() * 2, 2000) : config.getMaxThreads();
+                            ? TpsCapacity.defaultThreads(config.getTps(), config.getExpectedResponseMs()) : config.getMaxThreads();
                     long gotThreads = (long) maxThreads * weights[u] / 100;
                     if (gotThreads < nodeCount) {
                         throw new BizException("「" + units.get(u).name() + "」占比 " + weights[u]
@@ -791,6 +814,13 @@ public class TaskService {
      */
     private long minTotal(int nodeCount, int weight) {
         return (100L * nodeCount + weight - 1) / weight;
+    }
+
+    private void validateExpectedResponseMs(TaskCreateRequest.Config config) {
+        if (config.getExpectedResponseMs() != null
+                && (config.getExpectedResponseMs() < 1 || config.getExpectedResponseMs() > 60_000)) {
+            throw new BizException("expectedResponseMs必须在1到60000之间");
+        }
     }
 
     /**
@@ -852,7 +882,15 @@ public class TaskService {
             wrapper.and(q -> q.like(TestTask::getName, keyword).or().like(TestTask::getTaskNo, keyword));
         }
         if (StringUtils.hasText(status)) {
-            wrapper.eq(TestTask::getStatus, status);
+            List<String> statuses = java.util.Arrays.stream(status.split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .toList();
+            if (statuses.size() == 1) {
+                wrapper.eq(TestTask::getStatus, statuses.get(0));
+            } else if (!statuses.isEmpty()) {
+                wrapper.in(TestTask::getStatus, statuses);
+            }
         }
         wrapper.orderByDesc(TestTask::getId);
         Page<TestTask> result = taskMapper.selectPage(new Page<>(page, size), wrapper);
@@ -901,7 +939,7 @@ public class TaskService {
      * @param id     任务ID
      * @param manual 是否手动启动（true 手动 / false 定时调度触发）
      */
-    public void start(Long id, boolean manual) {
+    public synchronized void start(Long id, boolean manual) {
         TestTask task = requireTask(id);
         if (!TestTask.STATUS_CREATED.equals(task.getStatus())) {
             throw new BizException("仅CREATED状态的任务可启动，当前：" + task.getStatus());
@@ -909,6 +947,7 @@ public class TaskService {
         requireNodesOnline(id);
         taskMapper.update(null, new LambdaUpdateWrapper<TestTask>()
                 .set(TestTask::getStatus, TestTask.STATUS_PREPARING)
+                .set(TestTask::getStatusTime, LocalDateTime.now())
                 .set(TestTask::getTriggerType, manual ? TestTask.TRIGGER_MANUAL : TestTask.TRIGGER_SCHEDULED)
                 .set(TestTask::getScheduledStartTime, manual ? null : task.getScheduledStartTime())
                 .eq(TestTask::getId, id));
@@ -946,6 +985,58 @@ public class TaskService {
             throw new BizException("以下节点当前离线，无法启动任务：" + String.join("、", offline)
                     + "。请等待节点上线或编辑任务移除该节点");
         }
+        List<String> engineMissing = nodes.stream()
+                .filter(n -> !StringUtils.hasText(n.getEngineVersion()))
+                .map(n -> n.getHostname() + "(" + n.getIp() + ")")
+                .toList();
+        if (!engineMissing.isEmpty()) {
+            throw new BizException("以下节点尚未完成 JMeter 引擎部署：" + String.join("、", engineMissing));
+        }
+        Set<String> engineVersions = nodes.stream().map(Node::getEngineVersion).collect(Collectors.toSet());
+        if (engineVersions.size() > 1) {
+            throw new BizException("参测节点 JMeter 引擎版本不一致：" + String.join("、", engineVersions));
+        }
+        List<String> overloaded = nodes.stream()
+                .filter(n -> (n.getCpuUsage() != null && n.getCpuUsage() >= START_MAX_CPU_PERCENT)
+                        || (n.getMemUsage() != null && n.getMemUsage() >= START_MAX_MEMORY_PERCENT))
+                .map(n -> n.getHostname() + "(CPU " + valueOrDash(n.getCpuUsage())
+                        + "%，内存 " + valueOrDash(n.getMemUsage()) + "%）")
+                .toList();
+        if (!overloaded.isEmpty()) {
+            throw new BizException("以下节点当前资源占用过高，拒绝启动：" + String.join("、", overloaded));
+        }
+        requireNodesExclusive(taskId, nodeKeys, byKey);
+    }
+
+    private void requireNodesExclusive(Long taskId, List<String> nodeKeys, Map<String, Node> nodeInfo) {
+        List<TestTask> activeTasks = taskMapper.selectList(new LambdaQueryWrapper<TestTask>()
+                .ne(TestTask::getId, taskId)
+                .in(TestTask::getStatus, TestTask.STATUS_PREPARING,
+                        TestTask.STATUS_RUNNING, TestTask.STATUS_STOPPING));
+        if (activeTasks.isEmpty()) {
+            return;
+        }
+        List<Long> activeTaskIds = activeTasks.stream().map(TestTask::getId).toList();
+        List<TaskNode> conflicts = taskNodeMapper.selectList(new LambdaQueryWrapper<TaskNode>()
+                .in(TaskNode::getTaskId, activeTaskIds)
+                .in(TaskNode::getNodeKey, nodeKeys)
+                .notIn(TaskNode::getStatus, TaskNode.STATUS_STOPPED, TaskNode.STATUS_FINISHED,
+                        TaskNode.STATUS_FAILED, TaskNode.STATUS_EXCLUDED));
+        if (conflicts.isEmpty()) {
+            return;
+        }
+        Map<Long, String> taskNames = activeTasks.stream()
+                .collect(Collectors.toMap(TestTask::getId, TestTask::getTaskNo));
+        List<String> details = conflicts.stream().map(conflict -> {
+            Node node = nodeInfo.get(conflict.getNodeKey());
+            String host = node == null ? conflict.getNodeKey() : node.getHostname() + "(" + node.getIp() + ")";
+            return host + " 被任务 " + taskNames.getOrDefault(conflict.getTaskId(), String.valueOf(conflict.getTaskId())) + " 占用";
+        }).distinct().toList();
+        throw new BizException("压力节点默认独占，存在执行中冲突：" + String.join("；", details));
+    }
+
+    private String valueOrDash(Double value) {
+        return value == null ? "-" : String.format(java.util.Locale.ROOT, "%.1f", value);
     }
 
     /**
@@ -962,13 +1053,14 @@ public class TaskService {
         TestTask update = new TestTask();
         update.setId(id);
         update.setStatus(TestTask.STATUS_STOPPING);
+        update.setStatusTime(LocalDateTime.now());
         taskMapper.updateById(update);
         taskOrchestrator.markStopRequested(id);
         auditService.record("STOP_TASK", "停止压测任务 " + task.getTaskNo());
     }
 
     /**
-     * 删除任务：仅终态（FINISHED/FAILED）或未启动（CREATED）任务可删，
+     * 删除任务：仅终态（FINISHED/FAILED/PARTIAL_FAILED/CANCELLED）或未启动（CREATED）任务可删，
      * 连同全部关联数据一并清理——压测报告、指标快照、错误样本、任务脚本快照、节点执行明细，
      * 记录审计日志。执行中任务须先停止并等收敛后再删
      *
@@ -979,7 +1071,9 @@ public class TaskService {
         TestTask task = requireTask(id);
         String status = task.getStatus();
         if (!TestTask.STATUS_CREATED.equals(status) && !TestTask.STATUS_FINISHED.equals(status)
-                && !TestTask.STATUS_FAILED.equals(status)) {
+                && !TestTask.STATUS_FAILED.equals(status)
+                && !TestTask.STATUS_PARTIAL_FAILED.equals(status)
+                && !TestTask.STATUS_CANCELLED.equals(status)) {
             throw new BizException("仅已创建/已完成/失败状态的任务可删除，请先停止执行中的任务，当前：" + status);
         }
         reportMapper.delete(new LambdaQueryWrapper<TestReport>()
@@ -988,6 +1082,7 @@ public class TaskService {
                 .eq(MetricSnapshot::getTaskId, id));
         errorSampleMapper.delete(new LambdaQueryWrapper<ErrorSample>()
                 .eq(ErrorSample::getTaskId, id));
+        deleteTaskShardFiles(task);
         taskScriptSnapshotMapper.delete(new LambdaQueryWrapper<TaskScriptSnapshot>()
                 .eq(TaskScriptSnapshot::getTaskId, id));
         taskNodeMapper.delete(new LambdaQueryWrapper<TaskNode>()
@@ -1006,33 +1101,50 @@ public class TaskService {
      */
     private void splitFile(DataFile file, Long taskId, int shardCount) {
         Path source = storageService.filePath(file.getMd5());
-        List<String> lines;
-        try {
-            lines = Files.readAllLines(source, StandardCharsets.UTF_8);
+        boolean csv = "CSV".equals(file.getFileType());
+        long totalLines;
+        String header = null;
+        try (BufferedReader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
+            String first = reader.readLine();
+            if (csv) {
+                header = first;
+            }
+            totalLines = first == null ? 0 : 1;
+            while (reader.readLine() != null) {
+                totalLines++;
+            }
         } catch (IOException e) {
             throw new BizException("读取待拆分文件失败：" + file.getName());
         }
-        boolean csv = "CSV".equals(file.getFileType());
-        String header = csv && !lines.isEmpty() ? lines.get(0) : null;
-        List<String> data = csv ? lines.subList(Math.min(1, lines.size()), lines.size()) : lines;
-        int base = data.size() / shardCount;
-        int remainder = data.size() % shardCount;
-        int offset = 0;
-        for (int idx = 0; idx < shardCount; idx++) {
-            int count = base + (idx < remainder ? 1 : 0);
-            List<String> shardLines = new ArrayList<>();
-            if (header != null) {
-                shardLines.add(header);
+        long dataLines = Math.max(0, totalLines - (csv && totalLines > 0 ? 1 : 0));
+        long base = dataLines / shardCount;
+        long remainder = dataLines % shardCount;
+        try (BufferedReader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
+            if (csv) {
+                reader.readLine();
             }
-            shardLines.addAll(data.subList(offset, offset + count));
-            offset += count;
-            Path target = storageService.shardPath(taskId, file.getId(), idx);
-            try {
+            for (int idx = 0; idx < shardCount; idx++) {
+                long count = base + (idx < remainder ? 1 : 0);
+                Path target = storageService.shardPath(taskId, file.getId(), idx);
                 Files.createDirectories(target.getParent());
-                Files.write(target, shardLines, StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                throw new BizException("生成分片文件失败：" + target);
+                try (BufferedWriter writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    if (header != null) {
+                        writer.write(header);
+                        writer.newLine();
+                    }
+                    for (long lineIndex = 0; lineIndex < count; lineIndex++) {
+                        String line = reader.readLine();
+                        if (line == null) {
+                            throw new IOException("文件行数在拆分过程中发生变化");
+                        }
+                        writer.write(line);
+                        writer.newLine();
+                    }
+                }
             }
+        } catch (IOException e) {
+            throw new BizException("生成分片文件失败：" + e.getMessage());
         }
     }
 

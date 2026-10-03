@@ -18,7 +18,7 @@ public class TaskReceiptRequest {
     @NotBlank(message = "nodeKey不能为空")
     private String nodeKey;
 
-    /** 阶段：READY/RUNNING/FINISHED/FAILED */
+    /** 阶段：READY/RUNNING/FINISHED/STOPPED/FAILED */
     @NotBlank(message = "phase不能为空")
     private String phase;
 

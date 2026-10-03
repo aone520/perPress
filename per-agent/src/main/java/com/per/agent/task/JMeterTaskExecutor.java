@@ -7,9 +7,11 @@ import com.per.agent.common.HttpDownloader;
 import com.per.agent.common.Jsons;
 import com.per.agent.config.AgentProperties;
 import com.per.agent.core.AgentLifecycle;
+import com.per.agent.core.ServerClock;
 import com.per.agent.engine.EngineManager;
 import com.per.agent.metrics.JtlMetricsCollector;
 import jakarta.annotation.PreDestroy;
+import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
@@ -22,9 +24,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.scheduling.annotation.Scheduled;
 
 /**
  * JMeter 压测任务执行器（M2 完整实现，遵循平台任务协议）：
@@ -36,10 +41,10 @@ import org.springframework.stereotype.Component;
  *       {jmeterBin} -n -t script.jmx -l result.jtl -j jmeter.log -J{k}={v}... →
  *       回执 RUNNING → 单线程 watcher 等待进程退出 → 退出码 0 回执 FINISHED，
  *       否则 FAILED+尾 200 字符日志；startedAt/endedAt 落盘 state.json。</li>
- *   <li>STOP：destroy → 3 秒未退 destroyForcibly → 回执 FINISHED（message=stopped by server）。</li>
+ *   <li>STOP：destroy → 3 秒未退 destroyForcibly → 回执 STOPPED（message=stopped by server）。</li>
  *   <li>stopAllRunning：心跳失联自停，强停全部运行中进程（不发回执）。</li>
  *   <li>M3 指标接线：START 启动进程成功即为该任务启动 JtlMetricsCollector（增量采集 result.jtl，
- *       10s 窗口聚合分桶后经 /agent/metrics 每窗一报）；进程退出（awaitExit）/STOP/失联自停/
+ *       可配置窗口（默认 3s）聚合分桶后经 /agent/metrics 每窗一报）；进程退出（awaitExit）/STOP/失联自停/
  *       残留清理均触发 collector.stopAndFlush()（尾窗 finished=true）；
  *       重复 START 由 collector 表先停旧再建新防重复；result.jtl 运行后保留用于排障。</li>
  * </ul>
@@ -65,6 +70,9 @@ public class JMeterTaskExecutor implements TaskExecutor {
     /** 任务状态持久化文件名 */
     private static final String STATE_FILE = "state.json";
 
+    /** JMeter 子进程 PID 文件，用于 Agent 异常重启后的孤儿清理 */
+    private static final String PID_FILE = "jmeter.pid";
+
     /** STOP 优雅退出等待时长（秒），超时强杀 */
     private static final long STOP_GRACE_SECONDS = 3;
 
@@ -77,11 +85,21 @@ public class JMeterTaskExecutor implements TaskExecutor {
     /** 运行中任务的指标采集器表：taskId → JTL 采集器（进程退出/停止时 stopAndFlush，重复 START 先停旧） */
     private final ConcurrentHashMap<Long, JtlMetricsCollector> collectors = new ConcurrentHashMap<>();
 
+    /** Agent 启动时发现并清理的孤儿任务，注册恢复后补报 FAILED */
+    private final Set<Long> recoveredFailures = ConcurrentHashMap.newKeySet();
+
+    /** 正在处理 START 的任务，防止统一起跑等待窗口内重复 START 并发执行 */
+    private final Set<Long> startingTasks = ConcurrentHashMap.newKeySet();
+
+    /** 已收到 STOP 的任务；用于关闭 STOP 与进程注册之间的竞态窗口 */
+    private final Set<Long> stopRequestedTasks = ConcurrentHashMap.newKeySet();
+
     private final AgentProperties properties;
     private final ServerClient serverClient;
     private final AgentLifecycle lifecycle;
     private final EngineManager engineManager;
     private final HttpDownloader downloader;
+    private final ServerClock serverClock;
 
     /** 进程退出 watcher 专用单线程（守护线程，阻塞于 waitFor 不影响调度） */
     private final ExecutorService processWatcher = Executors.newSingleThreadExecutor(r -> {
@@ -89,6 +107,53 @@ public class JMeterTaskExecutor implements TaskExecutor {
         thread.setDaemon(true);
         return thread;
     });
+
+    @PostConstruct
+    public void recoverOrphanProcesses() {
+        Path tasksRoot = Path.of(properties.getDataDir()).toAbsolutePath().normalize().resolve("tasks");
+        if (!Files.isDirectory(tasksRoot)) {
+            return;
+        }
+        try (var dirs = Files.list(tasksRoot)) {
+            dirs.filter(Files::isDirectory).forEach(dir -> recoverTaskDirectory(dir));
+        } catch (IOException e) {
+            log.warn("[Task] Agent 启动时扫描孤儿进程失败: {}", e.getMessage());
+        }
+    }
+
+    private void recoverTaskDirectory(Path dir) {
+        long taskId;
+        try {
+            taskId = Long.parseLong(dir.getFileName().toString());
+        } catch (NumberFormatException e) {
+            return;
+        }
+        TaskState state = loadState(taskId);
+        if (state == null || !TaskState.STATUS_RUNNING.equals(state.status())) {
+            return;
+        }
+        Path pidFile = dir.resolve(PID_FILE);
+        try {
+            if (Files.isRegularFile(pidFile)) {
+                long pid = Long.parseLong(Files.readString(pidFile).trim());
+                ProcessHandle.of(pid).filter(ProcessHandle::isAlive).ifPresent(process -> {
+                    log.warn("[Task] Agent 重启发现孤儿 JMeter 进程，执行清理: taskId={}, pid={}", taskId, pid);
+                    process.destroy();
+                    try {
+                        process.onExit().get(STOP_GRACE_SECONDS, TimeUnit.SECONDS);
+                    } catch (Exception ignored) {
+                        process.destroyForcibly();
+                    }
+                });
+            }
+        } catch (Exception e) {
+            log.warn("[Task] 任务 {} 孤儿 PID 清理失败: {}", taskId, e.getMessage());
+        } finally {
+            deletePidFile(taskId);
+        }
+        updateStateQuietly(taskId, TaskState.STATUS_FAILED);
+        recoveredFailures.add(taskId);
+    }
 
     /**
      * 处理 PREPARE 指令：下载脚本与附件并校验，全部成功写 PREPARED 状态并回执 READY；
@@ -101,6 +166,10 @@ public class JMeterTaskExecutor implements TaskExecutor {
         long taskId = task.taskId();
         try {
             TaskState state = loadState(taskId);
+            if (state != null && TaskState.STATUS_STOPPED.equals(state.status())) {
+                sendReceipt(taskId, TaskReceipt.PHASE_STOPPED, "stopped before scheduled start");
+                return;
+            }
             if (state != null && TaskState.STATUS_PREPARED.equals(state.status())) {
                 log.info("[Task] 任务 {} 已 PREPARED，重复 PREPARE 幂等跳过", taskId);
                 sendReceipt(taskId, TaskReceipt.PHASE_READY, "重复 PREPARE：任务已就绪");
@@ -147,15 +216,43 @@ public class JMeterTaskExecutor implements TaskExecutor {
      * @param taskId 任务 ID
      */
     @Override
-    public void handleStart(long taskId) {
+    public void handleStart(long taskId, Long startAt) {
+        if (!startingTasks.add(taskId)) {
+            log.info("[Task] 任务 {} START 正在处理中，忽略重复指令", taskId);
+            return;
+        }
         try {
-            killResidualProcess(taskId);
+            if (startAt != null) {
+                long waitMs = startAt - serverClock.now();
+                if (waitMs > 0) {
+                    log.info("[Task] 任务 {} 等待统一起跑时间，剩余 {}ms", taskId, waitMs);
+                    Thread.sleep(waitMs);
+                }
+            }
+            if (stopRequestedTasks.contains(taskId)) {
+                log.info("[Task] 任务 {} 等待起跑期间已收到 STOP，取消启动", taskId);
+                return;
+            }
             TaskState state = loadState(taskId);
+            if (state != null && TaskState.STATUS_RUNNING.equals(state.status())) {
+                log.info("[Task] 任务 {} 已处于 RUNNING，忽略重复 START", taskId);
+                return;
+            }
+            if (state != null && TaskState.STATUS_STOPPED.equals(state.status())) {
+                log.info("[Task] 任务 {} 已处于 STOPPED，忽略 START", taskId);
+                return;
+            }
+            if (state != null && (TaskState.STATUS_FINISHED.equals(state.status())
+                    || TaskState.STATUS_FAILED.equals(state.status()))) {
+                log.info("[Task] 任务 {} 已处于终态 {}，忽略 START", taskId, state.status());
+                return;
+            }
             if (state == null || !TaskState.STATUS_PREPARED.equals(state.status())) {
                 log.warn("[Task] 任务 {} 未处于 PREPARED 状态，拒绝启动", taskId);
                 sendReceipt(taskId, TaskReceipt.PHASE_FAILED, "任务未准备（缺少 PREPARED 状态）");
                 return;
             }
+            killResidualProcess(taskId);
             Path jmeterBin = engineManager.getJmeterBin();
             if (jmeterBin == null) {
                 log.error("[Task] 任务 {} 启动失败：JMeter 引擎未就绪", taskId);
@@ -185,8 +282,22 @@ public class JMeterTaskExecutor implements TaskExecutor {
             int heapMb = state.jmeterHeapMb() != null ? state.jmeterHeapMb() : properties.getJmeterHeapMb();
             builder.environment().put("HEAP", "-Xmx" + heapMb + "m");
             Process process = builder.start();
+            writePidFile(taskId, process.pid());
             RunningTask running = new RunningTask(process);
-            runningTasks.put(taskId, running);
+            AtomicBoolean registered = new AtomicBoolean();
+            runningTasks.compute(taskId, (ignored, current) -> {
+                if (stopRequestedTasks.contains(taskId)) {
+                    return current;
+                }
+                registered.set(true);
+                return running;
+            });
+            if (!registered.get()) {
+                log.info("[Task] 任务 {} 启动进程期间收到 STOP，立即终止 pid={}", taskId, process.pid());
+                terminate(taskId, running);
+                updateStateQuietly(taskId, TaskState.STATUS_STOPPED);
+                return;
+            }
             startCollector(taskId, taskDir.resolve(RESULT_FILE));
             saveState(new TaskState(taskId, TaskState.STATUS_RUNNING, System.currentTimeMillis(), null,
                     state.jmeterProps(), state.jmeterHeapMb()));
@@ -197,6 +308,8 @@ public class JMeterTaskExecutor implements TaskExecutor {
         } catch (Throwable t) {
             log.error("[Task] 任务 {} 启动失败: {}", taskId, t.getMessage(), t);
             sendReceipt(taskId, TaskReceipt.PHASE_FAILED, "启动失败: " + t.getMessage());
+        } finally {
+            startingTasks.remove(taskId);
         }
     }
 
@@ -209,17 +322,20 @@ public class JMeterTaskExecutor implements TaskExecutor {
     @Override
     public void handleStop(long taskId) {
         try {
+            stopRequestedTasks.add(taskId);
             RunningTask running = runningTasks.remove(taskId);
             if (running == null) {
-                log.warn("[Task] 收到 STOP 指令但任务 {} 当前未运行，直接回执 FINISHED", taskId);
-                sendReceipt(taskId, TaskReceipt.PHASE_FINISHED, "stopped by server");
+                log.info("[Task] 收到 STOP 指令但任务 {} 当前未运行，直接回执 STOPPED", taskId);
+                updateStateQuietly(taskId, TaskState.STATUS_STOPPED);
+                deletePidFile(taskId);
+                sendReceipt(taskId, TaskReceipt.PHASE_STOPPED, "stopped by server");
                 return;
             }
             log.info("[Task] 收到 STOP 指令，停止任务 {}，pid={}", taskId, running.process.pid());
             terminate(taskId, running);
             stopCollectorQuietly(taskId);
-            updateStateQuietly(taskId, TaskState.STATUS_FINISHED);
-            sendReceipt(taskId, TaskReceipt.PHASE_FINISHED, "stopped by server");
+            updateStateQuietly(taskId, TaskState.STATUS_STOPPED);
+            sendReceipt(taskId, TaskReceipt.PHASE_STOPPED, "stopped by server");
         } catch (Throwable t) {
             log.error("[Task] 任务 {} 停止失败: {}", taskId, t.getMessage(), t);
             sendReceipt(taskId, TaskReceipt.PHASE_FAILED, "停止失败: " + t.getMessage());
@@ -250,6 +366,20 @@ public class JMeterTaskExecutor implements TaskExecutor {
                 terminate(taskId, running);
             }
             stopCollectorQuietly(taskId);
+            updateStateQuietly(taskId, TaskState.STATUS_STOPPED);
+        }
+    }
+
+    @Override
+    public void reportRecoveredFailures() {
+        for (Long taskId : recoveredFailures) {
+            try {
+                serverClient.sendReceipt(new TaskReceipt(taskId, lifecycle.currentNodeKey(),
+                        TaskReceipt.PHASE_FAILED, "Agent 重启后清理了遗留 JMeter 进程"));
+                recoveredFailures.remove(taskId);
+            } catch (Throwable t) {
+                log.debug("[Task] 任务 {} 孤儿清理回执暂未送达: {}", taskId, t.getMessage());
+            }
         }
     }
 
@@ -258,8 +388,36 @@ public class JMeterTaskExecutor implements TaskExecutor {
      */
     @PreDestroy
     public void shutdown() {
+        stopAllRunning();
         stopAllCollectorsQuietly();
         processWatcher.shutdown();
+    }
+
+    @Scheduled(cron = "0 20 4 * * *")
+    public void cleanupExpiredTaskDirectories() {
+        long cutoff = System.currentTimeMillis()
+                - TimeUnit.DAYS.toMillis(Math.max(1, properties.getTaskRetentionDays()));
+        Path tasksRoot = Path.of(properties.getDataDir()).toAbsolutePath().normalize().resolve("tasks");
+        if (!Files.isDirectory(tasksRoot)) {
+            return;
+        }
+        try (var dirs = Files.list(tasksRoot)) {
+            dirs.filter(Files::isDirectory).forEach(dir -> {
+                try {
+                    long taskId = Long.parseLong(dir.getFileName().toString());
+                    TaskState state = loadState(taskId);
+                    if (state != null && state.endedAt() != null && state.endedAt() < cutoff
+                            && !runningTasks.containsKey(taskId)) {
+                        deleteRecursively(dir);
+                        log.info("[Task] 已清理过期任务工作目录: taskId={}, dir={}", taskId, dir);
+                    }
+                } catch (Exception e) {
+                    log.warn("[Task] 清理任务目录 {} 失败: {}", dir, e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            log.warn("[Task] 扫描过期任务目录失败: {}", e.getMessage());
+        }
     }
 
     /**
@@ -374,7 +532,7 @@ public class JMeterTaskExecutor implements TaskExecutor {
     }
 
     /**
-     * 清理同任务残留运行进程（重复 START/异常场景兜底），并标记跳过 watcher 回执。
+     * 清理 PREPARED 状态下异常遗留的同任务运行进程，并标记跳过 watcher 回执。
      *
      * @param taskId 任务 ID
      */
@@ -420,6 +578,24 @@ public class JMeterTaskExecutor implements TaskExecutor {
         command.add(RESULT_FILE);
         command.add("-j");
         command.add(JMETER_LOG_FILE);
+        // 只保留实时聚合所需字段，显著降低高 TPS 下 JTL 写盘量。
+        command.add("-Jjmeter.save.saveservice.output_format=csv");
+        command.add("-Jjmeter.save.saveservice.timestamp_format=ms");
+        command.add("-Jjmeter.save.saveservice.time=true");
+        command.add("-Jjmeter.save.saveservice.label=true");
+        command.add("-Jjmeter.save.saveservice.response_code=true");
+        command.add("-Jjmeter.save.saveservice.response_message=true");
+        command.add("-Jjmeter.save.saveservice.successful=true");
+        command.add("-Jjmeter.save.saveservice.assertion_results_failure_message=true");
+        command.add("-Jjmeter.save.saveservice.bytes=true");
+        command.add("-Jjmeter.save.saveservice.sent_bytes=true");
+        command.add("-Jjmeter.save.saveservice.thread_counts=true");
+        command.add("-Jjmeter.save.saveservice.thread_name=false");
+        command.add("-Jjmeter.save.saveservice.data_type=false");
+        command.add("-Jjmeter.save.saveservice.url=false");
+        command.add("-Jjmeter.save.saveservice.latency=false");
+        command.add("-Jjmeter.save.saveservice.connect_time=false");
+        command.add("-Jjmeter.save.saveservice.idle_time=false");
         if (props != null) {
             props.forEach((key, value) -> {
                 if (key != null && value != null) {
@@ -483,6 +659,8 @@ public class JMeterTaskExecutor implements TaskExecutor {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
             log.error("[Task] 任务 {} 进程等待异常", taskId, t);
+        } finally {
+            deletePidFile(taskId);
         }
     }
 
@@ -508,6 +686,28 @@ public class JMeterTaskExecutor implements TaskExecutor {
             running.process.destroyForcibly();
         } catch (Throwable t) {
             log.error("[Task] 任务 {} 进程终止异常", taskId, t);
+        } finally {
+            deletePidFile(taskId);
+        }
+    }
+
+    private void writePidFile(long taskId, long pid) throws IOException {
+        Files.writeString(taskDir(taskId).resolve(PID_FILE), Long.toString(pid), StandardCharsets.UTF_8);
+    }
+
+    private void deletePidFile(long taskId) {
+        try {
+            Files.deleteIfExists(taskDir(taskId).resolve(PID_FILE));
+        } catch (IOException e) {
+            log.warn("[Task] 任务 {} PID 文件删除失败: {}", taskId, e.getMessage());
+        }
+    }
+
+    private void deleteRecursively(Path root) throws IOException {
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -541,7 +741,7 @@ public class JMeterTaskExecutor implements TaskExecutor {
     }
 
     /**
-     * 发送任务回执（phase: READY/RUNNING/FINISHED/FAILED），message 超长截断；
+     * 发送任务回执（phase: READY/RUNNING/FINISHED/STOPPED/FAILED），message 超长截断；
      * 发送失败仅记录错误日志，不影响任务主流程。
      *
      * @param taskId  任务 ID

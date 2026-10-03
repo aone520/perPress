@@ -3,7 +3,7 @@
   - 无 taskId 时：展示任务选择卡片（近 20 条非 CREATED 任务下拉），选中后跳转 ?taskId=
   - 有 taskId 时：KPI 行（当前 TPS / 平均 RT / P95 / 错误率 / 活跃线程，附总请求数）
     + 2×2 四张 ECharts 曲线（TPS+错误数副轴、RT avg/p95/p99、错误率%、活跃线程），共用同一时间轴（HH:mm:ss）
-  - 每 3 秒轮询 metrics；detail 接口检测到任务 FINISHED/FAILED 时停止轮询并提示"任务已结束，数据为最终态"
+  - 每 3 秒增量轮询 metrics；每 30 秒刷新一次全量汇总，终态后停止轮询
   - 头部操作：运行中显示「停止任务」（二次确认后下发停止指令）；已完成显示「查看报告」直达压测报告页
   - 页面离开清除定时器与 resize 监听并销毁图表实例；echarts 按需引入，容器随窗口自适应
 -->
@@ -62,7 +62,7 @@
               type="danger"
               :loading="stopping"
               @click="handleStop"
-            >停止任务</el-button>
+            >{{ stopButtonLabel(task) }}</el-button>
             <!-- 已完成：直达压测报告 -->
             <el-button
               v-if="canReport"
@@ -128,6 +128,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { page as pageTasks, detail as taskDetail, stopTask } from '@/api/task'
 import { getTaskMetrics } from '@/api/metric'
 import { formatClock } from '@/utils/format'
+import { useTaskCountdown } from '@/composables/useTaskCountdown'
 import {
   CHART_COLORS,
   CHART_GRID,
@@ -143,6 +144,7 @@ echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipCompone
 
 const route = useRoute()
 const router = useRouter()
+const { stopButtonLabel } = useTaskCountdown()
 
 /** 任务状态元信息：展示文案与 tag 颜色 */
 const TASK_STATUS_META = {
@@ -151,17 +153,25 @@ const TASK_STATUS_META = {
   RUNNING: { text: '运行中', type: 'success' },
   STOPPING: { text: '停止中', type: 'warning' },
   FINISHED: { text: '已完成', type: 'primary' },
-  FAILED: { text: '失败', type: 'danger' }
+  FAILED: { text: '失败', type: 'danger' },
+  PARTIAL_FAILED: { text: '部分失败', type: 'warning' },
+  CANCELLED: { text: '已取消', type: 'info' }
 }
 
 /** 任务终态集合：到达后停止轮询 */
-const TERMINAL_STATUSES = ['FINISHED', 'FAILED']
+const TERMINAL_STATUSES = ['FINISHED', 'FAILED', 'PARTIAL_FAILED', 'CANCELLED']
 
 /** 轮询间隔（毫秒） */
 const POLL_INTERVAL = 3000
 
 /** 连续拉取失败上限：达到后停止自动刷新，避免错误提示刷屏 */
 const MAX_FAIL_COUNT = 3
+
+/** 每 10 次增量轮询刷新一次采样器汇总与累计数据 */
+const SUMMARY_REFRESH_EVERY = 10
+
+/** 图表最多保留的窗口点数，与服务端保持一致 */
+const MAX_SERIES_POINTS = 200
 
 /** 当前监控的任务 ID（来自 ?taskId=） */
 const taskId = computed(() => route.query.taskId || '')
@@ -214,7 +224,7 @@ const task = ref(null)
 /** 指标数据：series / samplers / total */
 const metrics = reactive({ series: [], samplers: [], total: null })
 
-/** 任务是否已到终态（FINISHED/FAILED） */
+/** 任务是否已到任一终态 */
 const finished = ref(false)
 
 /** 停止指令下发中（按钮 loading 用） */
@@ -224,7 +234,7 @@ const stopping = ref(false)
 const canStop = computed(() => task.value?.status === 'RUNNING')
 
 /** 可查看报告：任务已完成（报告随任务收尾生成） */
-const canReport = computed(() => task.value?.status === 'FINISHED')
+const canReport = computed(() => ['FINISHED', 'PARTIAL_FAILED', 'CANCELLED'].includes(task.value?.status))
 
 /**
  * 停止任务：二次确认后下发停止指令，本地先置为 STOPPING 防重复点击，随后立即刷新详情
@@ -258,6 +268,7 @@ function goReport() {
 /** 轮询定时器句柄与连续失败计数 */
 let pollTimer = null
 let failCount = 0
+let summaryPollCount = 0
 
 /** 四张图表的容器 ref 与实例句柄 */
 const tpsChartRef = ref(null)
@@ -488,13 +499,33 @@ function renderAll() {
  * 拉取实时指标并刷新界面
  * @param {boolean} silent 是否静默（轮询场景不再额外处理错误 UI）
  */
-async function loadMetrics(silent = false) {
+function mergeSeries(current, incoming) {
+  const points = new Map()
+  ;[...(current || []), ...(incoming || [])].forEach((item) => {
+    if (item?.t != null) points.set(String(item.t), item)
+  })
+  return [...points.values()]
+    .sort((a, b) => Number(a.t) - Number(b.t))
+    .slice(-MAX_SERIES_POINTS)
+}
+
+async function loadMetrics(silent = false, incremental = false) {
   try {
-    const res = await getTaskMetrics(taskId.value)
+    const lastPoint = incremental ? metrics.series.at(-1) : null
+    const includeSummary = !incremental || summaryPollCount % SUMMARY_REFRESH_EVERY === 0
+    const params = { includeSummary }
+    if (lastPoint?.t != null) {
+      params.afterWindow = Math.round(Number(lastPoint.t) * 1000)
+    }
+    const res = await getTaskMetrics(taskId.value, params)
     const data = res.data || {}
-    metrics.series = data.series || []
-    metrics.samplers = data.samplers || []
-    metrics.total = data.total || null
+    metrics.series = incremental
+      ? mergeSeries(metrics.series, data.series)
+      : (data.series || []).slice(-MAX_SERIES_POINTS)
+    if (includeSummary) {
+      metrics.samplers = data.samplers || []
+      metrics.total = data.total || null
+    }
     failCount = 0
     renderAll()
   } catch {
@@ -536,7 +567,8 @@ async function pollOnce() {
   if (document.visibilityState === 'hidden' || finished.value) {
     return
   }
-  await Promise.all([loadMetrics(true), loadTask()])
+  summaryPollCount += 1
+  await Promise.all([loadMetrics(true, true), loadTask()])
 }
 
 /**
@@ -582,6 +614,7 @@ function disposeCharts() {
 async function setupMonitor() {
   finished.value = false
   failCount = 0
+  summaryPollCount = 0
   task.value = null
   metrics.series = []
   metrics.samplers = []

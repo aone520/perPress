@@ -31,10 +31,10 @@ import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 任务编排服务：驱动任务状态机（创建→下发→节点准备→启动→结束）。
@@ -58,6 +58,9 @@ public class TaskOrchestrator {
     /** RUNNING 中节点心跳失联判定阈值（秒，心跳间隔 10s，连续 12 次未上报判定失联） */
     private static final int HEARTBEAT_LOST_SECONDS = 120;
 
+    /** 全节点 READY 后预留的统一起跑等待时间 */
+    private static final int START_DELAY_SECONDS = 5;
+
     private final TestTaskMapper taskMapper;
     private final TaskNodeMapper taskNodeMapper;
     private final DataFileMapper dataFileMapper;
@@ -67,12 +70,6 @@ public class TaskOrchestrator {
     private final FileStorageService storageService;
     private final ReportService reportService;
     private final ObjectMapper objectMapper;
-
-    /** 任务ID → STOP 请求时间（内存记录，用于 STOPPING 超时强制收尾） */
-    private final ConcurrentHashMap<Long, LocalDateTime> stopRequestedAt = new ConcurrentHashMap<>();
-
-    /** 任务ID → 首次观察到 PREPARING 的时间（内存记录，用于准备超时兜底；重启后自首次巡检重新计时） */
-    private final ConcurrentHashMap<Long, LocalDateTime> preparingSince = new ConcurrentHashMap<>();
 
     /**
      * 命令轮询决策（AgentService.poll 调用）：
@@ -103,7 +100,9 @@ public class TaskOrchestrator {
             }
             if (TestTask.STATUS_RUNNING.equals(task.getStatus())
                     && TaskNode.STATUS_READY.equals(node.getStatus())) {
-                return new AgentPollVO("START", new AgentTaskCommandVO(task.getId()));
+                Long startAt = task.getStartTime() == null ? null
+                        : task.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                return new AgentPollVO("START", new AgentTaskCommandVO(task.getId(), startAt));
             }
         }
         return new AgentPollVO(null, null);
@@ -188,8 +187,8 @@ public class TaskOrchestrator {
 
     /**
      * 处理 Agent 任务回执：
-     * READY —— 本节点置 READY；若该任务全部节点 READY → 任务置 RUNNING 并记录 start_time（下次 poll 返回 START）；
-     * RUNNING —— 本节点置 RUNNING 并记录 start_time；FINISHED/FAILED —— 本节点置终态并记录 end_time
+     * READY —— 本节点置 READY；若该任务全部节点 READY → 任务置 RUNNING、生成统一 startAt（下次 poll 返回 START）；
+     * RUNNING —— 本节点置 RUNNING 并记录 start_time；FINISHED/STOPPED/FAILED —— 本节点置终态并记录 end_time
      *
      * @param request 回执请求（taskId/nodeKey/phase/message）
      */
@@ -216,6 +215,10 @@ public class TaskOrchestrator {
                     .set(TaskNode::getStatus, TaskNode.STATUS_FINISHED)
                     .set(TaskNode::getEndTime, LocalDateTime.now())
                     .eq(TaskNode::getId, node.getId()));
+            case "STOPPED" -> taskNodeMapper.update(null, new LambdaUpdateWrapper<TaskNode>()
+                    .set(TaskNode::getStatus, TaskNode.STATUS_STOPPED)
+                    .set(TaskNode::getEndTime, LocalDateTime.now())
+                    .eq(TaskNode::getId, node.getId()));
             case "FAILED" -> {
                 taskNodeMapper.update(null, new LambdaUpdateWrapper<TaskNode>()
                         .set(TaskNode::getStatus, TaskNode.STATUS_FAILED)
@@ -226,7 +229,7 @@ public class TaskOrchestrator {
                 // 否则 READY 节点将永远等不到全员就绪的 START，任务挂死在 PREPARING
                 failTaskIfNoPreparing(taskId, request.getMessage());
             }
-            default -> throw new BizException("回执phase不合法，仅支持 READY/RUNNING/FINISHED/FAILED");
+            default -> throw new BizException("回执phase不合法，仅支持 READY/RUNNING/FINISHED/STOPPED/FAILED");
         }
     }
 
@@ -262,6 +265,7 @@ public class TaskOrchestrator {
         }
         taskMapper.update(null, new LambdaUpdateWrapper<TestTask>()
                 .set(TestTask::getStatus, TestTask.STATUS_FAILED)
+                .set(TestTask::getStatusTime, LocalDateTime.now())
                 .set(TestTask::getEndTime, LocalDateTime.now())
                 .eq(TestTask::getId, taskId));
         log.warn("任务 {} 有节点准备失败且无节点准备中，任务整体置 FAILED：{}", task.getTaskNo(), errorMsg);
@@ -282,11 +286,13 @@ public class TaskOrchestrator {
                 .eq(TaskNode::getTaskId, taskId));
         boolean allReady = nodes.stream().allMatch(n -> TaskNode.STATUS_READY.equals(n.getStatus()));
         if (allReady) {
+            LocalDateTime now = LocalDateTime.now();
             taskMapper.update(null, new LambdaUpdateWrapper<TestTask>()
                     .set(TestTask::getStatus, TestTask.STATUS_RUNNING)
-                    .set(TestTask::getStartTime, LocalDateTime.now())
+                    .set(TestTask::getStatusTime, now)
+                    .set(TestTask::getStartTime, now.plusSeconds(START_DELAY_SECONDS))
                     .eq(TestTask::getId, taskId));
-            log.info("任务 {} 全部节点就绪，进入 RUNNING", task.getTaskNo());
+            log.info("任务 {} 全部节点就绪，进入 RUNNING，{} 秒后统一起跑", task.getTaskNo(), START_DELAY_SECONDS);
         }
     }
 
@@ -296,7 +302,9 @@ public class TaskOrchestrator {
      * @param taskId 任务ID
      */
     public void markStopRequested(Long taskId) {
-        stopRequestedAt.put(taskId, LocalDateTime.now());
+        taskMapper.update(null, new LambdaUpdateWrapper<TestTask>()
+                .set(TestTask::getStatusTime, LocalDateTime.now())
+                .eq(TestTask::getId, taskId));
     }
 
     /**
@@ -320,7 +328,6 @@ public class TaskOrchestrator {
                 inspectPreparing(task, nodes);
                 continue;
             }
-            preparingSince.remove(task.getId());
             if (TestTask.STATUS_RUNNING.equals(task.getStatus())) {
                 markHeartbeatLostNodes(task, nodes);
                 nodes = taskNodeMapper.selectList(new LambdaQueryWrapper<TaskNode>()
@@ -328,9 +335,9 @@ public class TaskOrchestrator {
             }
             boolean allTerminal = nodes.stream().allMatch(n -> NODE_TERMINAL_STATUS.contains(n.getStatus()));
             if (TestTask.STATUS_STOPPING.equals(task.getStatus())) {
-                LocalDateTime requestedAt = stopRequestedAt.get(task.getId());
+                LocalDateTime requestedAt = task.getStatusTime();
                 if (allTerminal) {
-                    finishTask(task, TestTask.STATUS_FINISHED);
+                    finishTask(task, TestTask.STATUS_CANCELLED);
                 } else if (requestedAt != null
                         && requestedAt.plusSeconds(STOP_TIMEOUT_SECONDS).isBefore(LocalDateTime.now())) {
                     taskNodeMapper.update(null, new LambdaUpdateWrapper<TaskNode>()
@@ -338,15 +345,25 @@ public class TaskOrchestrator {
                             .set(TaskNode::getEndTime, LocalDateTime.now())
                             .eq(TaskNode::getTaskId, task.getId())
                             .notIn(TaskNode::getStatus, NODE_TERMINAL_STATUS));
-                    finishTask(task, TestTask.STATUS_FINISHED);
-                    log.warn("任务 {} STOPPING 超 120s，强制收尾为 FINISHED", task.getTaskNo());
+                    finishTask(task, TestTask.STATUS_CANCELLED);
+                    log.warn("任务 {} STOPPING 超 120s，强制收尾为 CANCELLED", task.getTaskNo());
                 }
             } else if (allTerminal) {
-                boolean anySuccess = nodes.stream().anyMatch(n ->
-                        TaskNode.STATUS_FINISHED.equals(n.getStatus()) || TaskNode.STATUS_STOPPED.equals(n.getStatus()));
-                finishTask(task, anySuccess ? TestTask.STATUS_FINISHED : TestTask.STATUS_FAILED);
+                finishTask(task, resolveFinalStatus(nodes));
             }
         }
+    }
+
+    static String resolveFinalStatus(List<TaskNode> nodes) {
+        long successCount = nodes.stream().filter(n -> TaskNode.STATUS_FINISHED.equals(n.getStatus())).count();
+        long failedCount = nodes.stream().filter(n -> TaskNode.STATUS_FAILED.equals(n.getStatus())).count();
+        if (!nodes.isEmpty() && successCount == nodes.size()) {
+            return TestTask.STATUS_FINISHED;
+        }
+        if (!nodes.isEmpty() && failedCount == nodes.size()) {
+            return TestTask.STATUS_FAILED;
+        }
+        return TestTask.STATUS_PARTIAL_FAILED;
     }
 
     /**
@@ -357,7 +374,10 @@ public class TaskOrchestrator {
      * @param nodes 该任务的全部节点
      */
     private void inspectPreparing(TestTask task, List<TaskNode> nodes) {
-        LocalDateTime since = preparingSince.computeIfAbsent(task.getId(), k -> LocalDateTime.now());
+        LocalDateTime since = task.getStatusTime() == null ? task.getCreateTime() : task.getStatusTime();
+        if (since == null) {
+            since = LocalDateTime.now();
+        }
         if (!since.plusSeconds(PREPARE_TIMEOUT_SECONDS).isBefore(LocalDateTime.now())) {
             return;
         }
@@ -422,20 +442,22 @@ public class TaskOrchestrator {
     }
 
     /**
-     * 收尾任务：置目标状态并记录 end_time，清理 STOP 时间记录；
-     * 正常收尾（FINISHED）后在事务内聚合固化测试报告（聚合失败仅告警，不影响状态机）
+     * 收尾任务：置目标状态并记录 end_time；
+     * 可出报告的终态在事务内聚合固化测试报告（聚合失败仅告警，不影响状态机）
      *
      * @param task        任务实体
-     * @param finalStatus 最终状态（FINISHED/FAILED）
+     * @param finalStatus 最终状态（FINISHED/FAILED/PARTIAL_FAILED/CANCELLED）
      */
     private void finishTask(TestTask task, String finalStatus) {
         taskMapper.update(null, new LambdaUpdateWrapper<TestTask>()
                 .set(TestTask::getStatus, finalStatus)
+                .set(TestTask::getStatusTime, LocalDateTime.now())
                 .set(TestTask::getEndTime, LocalDateTime.now())
                 .eq(TestTask::getId, task.getId()));
-        stopRequestedAt.remove(task.getId());
         log.info("任务 {} 收尾为 {}", task.getTaskNo(), finalStatus);
-        if (TestTask.STATUS_FINISHED.equals(finalStatus)) {
+        if (TestTask.STATUS_FINISHED.equals(finalStatus)
+                || TestTask.STATUS_PARTIAL_FAILED.equals(finalStatus)
+                || TestTask.STATUS_CANCELLED.equals(finalStatus)) {
             try {
                 reportService.aggregate(task.getId());
             } catch (Exception e) {

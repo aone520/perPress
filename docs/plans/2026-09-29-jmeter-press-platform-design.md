@@ -1,9 +1,9 @@
 # JMeter 分布式压测平台（PerPress）设计文档
 
-> 版本：v2.0　日期：2026-10-03　状态：M1-M4 已交付，进入迭代优化期
+> 版本：v2.1　日期：2026-10-03　状态：M1-M4 已交付，功能正确性与高 TPS 稳定性加固完成
 >
-> v2.0 变更：对齐交付实现（混合编排/一键调试/接口漏斗/压力机资源监控），
-> 修订技术选型与报告体系为实际方案，补全全部数据表与迭代记录。
+> v2.1 变更：修复定时执行、串行业务 TPS、分布式状态与线程统计；增加节点独占与容量准入、
+> 统一起跑、重启恢复、指标重试与增量监控，并将默认指标窗口统一为 3 秒。
 
 ## 1. 项目概述
 
@@ -50,9 +50,9 @@
 | Server | Java 17 + Spring Boot 3.2 + MyBatis-Plus + MySQL 8 + jjwt + BCrypt |
 | Agent | Java 17 + 精简 Spring Boot（非 Web 模式）+ java.net.http.HttpClient + OSHI（资源采样） |
 | 压测引擎 | JMeter 5.6.3 由平台统一下发；吞吐控制用 **Constant Throughput Timer（calcMode=0 每线程限速）**，漏斗用 **ThroughputController（percentThroughput）** |
-| 指标 | JTL 逐行解析 + **MetricBuckets 桶合并分位数**（P50/P75/P90/P95/P99/P999），**3s 窗口**快照（`per.agent.metrics-window-ms` 默认 3000，最小 1000） |
+| 指标 | 紧凑 JTL 增量解析 + **MetricBuckets 桶合并分位数**（P50/P75/P90/P95/P99/P999），**3s 窗口**快照；单轮追到文件尾，网络失败指数退避重试 |
 | 前端 | Vue 3 + Vite + Element Plus + Pinia + vue-router + axios + ECharts（chartTheme 统一主题 + 设计令牌体系） |
-| 实时监控 | 前端 **3s 轮询**（未用 SSE，架构更简单） |
+| 实时监控 | 前端 **3s 增量轮询**，每 30s 刷新一次全量汇总（未用 SSE） |
 | 部署 | docker-compose（mysql+server+nginx+demo-target+agent×3）；Agent install.sh |
 
 与 v1.0 的差异：HdrHistogram 直方图 blob → JTL+桶聚合；Precise Throughput Timer → CTT（每线程限速，多段/多单元互不干扰）；SSE → 轮询；monaco-editor 暂不引入（表单编排覆盖，JMX 导入兜底）。
@@ -65,7 +65,7 @@
 | 脚本中心 | 表单化混合编排（串行/并行组、全局环境+UDV、HTTP/断言/请求头/请求体）、三类参数提取器（JSON/正则/边界）+ 测试面板、CSV/TXT 参数文件引用、**一键调试（全量/单接口）**、导入 .jmx、版本留档、复制 | ✅ |
 | 节点中心 | 安装命令生成、注册 token、心跳探活、CPU/内存/JVM/**网络带宽**实时监控、标签分组、引擎自动部署与版本一致性 | ✅ |
 | 任务中心 | 选脚本+选节点+选模式、**执行单元流量占比（weights）+ 接口漏斗（funnelPercents 任务级覆盖）**、立即/定时执行、克隆、整页编辑、运行中停止 | ✅ |
-| 实时监控 | 3s 轮询曲线（TPS/RT/错误率/活跃线程）、任务切换、**运行中停止/完成看报告操作** | ✅ |
+| 实时监控 | 3s 增量轮询曲线（TPS/RT/错误率/跨节点线程总数）、任务切换、终态报告 | ✅ |
 | 报告中心 | KPI/分位/趋势/事务/节点/**压力机资源（CPU/内存/网络）**/错误分析/错误样本、HTML 离线导出、打印 | ✅ |
 
 ## 5. 核心机制设计
@@ -87,12 +87,12 @@
 ### 5.3 任务生命周期（状态机）
 
 ```
-CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测模式重渲染 JMX + 文件分片 + -J 参数包)
-→ 节点准备(增量下载→MD5校验→READY回执) → RUNNING(START→3s指标快照上报)
-→ STOPPING(时长到/手动/异常) → FINISHED(聚合报告) / FAILED
+CREATED → 校验(脚本/节点在线/引擎版本/资源余量/节点独占/文件) → 快照(JMX + 流式文件分片 + -J 参数包)
+→ 节点准备(增量下载→MD5校验→READY回执) → RUNNING(统一 startAt 起跑→3s指标快照上报)
+→ STOPPING(手动停止) → CANCELLED；自然结束 → FINISHED / PARTIAL_FAILED / FAILED
 ```
 
-异常策略：节点超时未 READY → 整体失败；运行中掉线 → 报告标注；Server 重启 → 未完成任务标记 FAILED，Agent 侧失联自停；JMeter 以子进程运行，Agent 重启时清理孤儿进程。
+异常策略：节点超时未 READY → 整体失败；运行中部分节点失败 → `PARTIAL_FAILED`；Server 通过 `status_time` 在重启后继续超时判断；Agent 重启清理 PID 文件记录的孤儿 JMeter 进程并补报失败。
 
 ### 5.4 混合编排编译（平台表单 → JMX）
 
@@ -106,7 +106,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 | 模式 | 表单配置 | 编译产物 | 多机拆分 |
 |---|---|---|---|
 | 并发模式 | 总并发、ramp-up、持续时长 | 每单元 ThreadGroup 参数化 + Duration 调度 | 线程数÷节点数按权重 |
-| 固定 TPS | 目标总 TPS、时长、线程上限 | 每单元 ThreadGroup + **CTT（calcMode=0 每线程独立限速）** | TPS÷节点数，各节点独立闭环控速 |
+| 固定 TPS | 目标业务 TPS、预期 RT、时长、可选线程上限 | CTT 挂在每执行单元首个采样器，每次业务迭代只限速一次 | TPS÷节点数，各节点独立闭环控速 |
 | 阶梯模式 | 起始/步长/每步/峰值/封顶 | 段表展开 N 段×单元 ThreadGroup（TPS 段配 CTT） | 段值÷节点数 |
 
 **串行链路关联**：
@@ -117,20 +117,23 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 - 脚本接口 `trafficPercent`（默认值）+ 任务 `config.funnelPercents`（组名/接口名 → 占比，覆盖默认）
 - 渲染为 ThroughputController 百分比模式（属性名 `percentThroughput`，perThread=false 全局统计）包裹采样器
 - 形成业务漏斗（如登录100→查价100→下单60→支付30），单元 TPS × 占比 = 接口实际 TPS；各接口独立判定
+- 自动线程数按 `TPS × expectedResponseMs ÷ 1000 × 1.5` 估算（默认预期 RT 100ms，自动值最高 50000）；可按实测 RT 手工覆盖
 
 ### 5.5 参数文件分发（公用/拆分）
 
 - **公用模式（SHARED）**：全量文件下发每台压测机
-- **拆分模式（SPLIT）**：Server 按实际参测节点数均分行、每分片补表头，跨机参数唯一
+- **拆分模式（SPLIT）**：Server 两遍流式扫描并按实际参测节点数均分行、每分片补表头，避免大文件整体进入 JVM 堆
 - CSV/TXT 均可（按扩展名识别类型；TXT 支持自定义分隔符如 `|`，varNames 固定逗号分隔）
 - JMX 零修改：文件放 Agent 工作目录、保持原文件名；分发按 MD5 增量缓存
 
 ### 5.6 指标采集与分位数
 
-- Agent 解析 JMeter JTL，按 **3s 窗口**（`per.agent.metrics-window-ms`，可配）聚合快照上报（样本数/错误/RT 桶/活跃线程/字节）
+- Agent 通过 JMeter 紧凑 CSV 配置仅保留聚合必需列，按 **3s 窗口**聚合；采集线程每秒增量读取且每轮追到当时文件尾，窗口只影响聚合/上报频率，不缓存原始请求
+- 指标窗口保持顺序上报；网络失败最多 5 次指数退避重试，结束阶段最长等待 60s 排空
 - Server 按 (taskId, nodeKey, sampler, windowStart) 幂等入库，MetricBuckets 桶合并计算全局分位数
+- 活跃线程按“同节点多个 sampler 取最大、跨节点求和”统计；监控接口支持 `afterWindow/includeSummary` 增量查询
 - 错误样本每窗口限 10 条、全任务累计前 200 条（ts/sampler/responseCode/message 对齐前端字段）
-- 与心跳通道区分：指标上报 3s；心跳（资源快照）10s
+- 与心跳通道区分：指标上报默认 3s；心跳（资源快照）10s
 
 ### 5.7 一键调试（不落库、不依赖压测节点）
 
@@ -158,9 +161,9 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 | `sys_config` | 系统配置（注册 token 等） |
 | `script` / `script_version` | 脚本主表（含 formDef JSON）与版本（JMX 留档） |
 | `data_file` | 文件库（CSV/TXT/JAR/BIN，md5 去重存储） |
-| `test_task` / `task_node` | 任务与节点关联（状态/分片/-J 参数） |
+| `test_task` / `task_node` | 任务与节点关联（含 status_time、取消/部分失败状态、分片/-J 参数） |
 | `task_script_snapshot` | 任务脚本快照（按模式重渲染的 JMX） |
-| `metric_snapshot` | 3s 指标快照（按 taskId/nodeKey/sampler/windowStart 幂等） |
+| `metric_snapshot` | 3s 指标快照（幂等唯一键 + taskId/windowStart 增量查询索引） |
 | `error_sample` | 错误样本明细（前 200 条） |
 | `test_report` | 任务结束固化聚合报告（5 个 JSON 分区） |
 | `node_resource_sample` | 任务期间压力机资源采样（CPU/内存/网络收发） |
@@ -172,7 +175,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 - 节点：`GET /api/nodes`、标签/删除/注册 token 重置/安装命令
 - 脚本：CRUD、`POST /api/scripts/form`（表单创建）、`POST /api/scripts/import`、版本管理、复制、**`POST /api/scripts/debug`（一键调试）**
 - 文件：`POST /api/files`（上传）、分页
-- 任务：CRUD、`POST /api/tasks/{id}/start|stop|copy`、`GET /api/tasks/{id}/metrics|report`、`GET /api/tasks/{id}/report/export`
+- 任务：CRUD、`POST /api/tasks/{id}/start|stop|copy`、`GET /api/tasks/{id}/metrics?afterWindow=&includeSummary=`、报告与导出
 - 用户/审计/引擎包管理
 
 **Agent 面 `/agent/**`（token）：**
@@ -189,7 +192,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 7. **压力机资源三图**：CPU% / 内存% / 网络带宽（收+发合计）
 8. **错误分析**：错误码分布、TOP 错误事务（含错误率）、错误时间分布、错误样本明细（真实 ts）
 
-导出：HTML 离线完整报告；打印支持（另存 PDF）。监控大屏复用同一指标体系（3s 轮询）。
+导出：HTML 离线完整报告；打印支持（另存 PDF）。监控大屏复用同一指标体系（3s 增量轮询）。
 
 ## 9. 部署方案（已交付）
 
@@ -206,7 +209,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 |---|---|---|
 | M1 基座 | 用户/JWT、节点注册/心跳/标签、Agent 骨架、前端布局/节点管理 | ✅ 交付 |
 | M2 脚本与执行 | JMX 导入+文件库+版本、并发模式全流程、-J 参数化、文件公用/拆分 | ✅ 交付 |
-| M3 模式与统计 | TPS/阶梯模式、3s 指标快照、分位数、监控大屏 | ✅ 交付 |
+| M3 模式与统计 | TPS/阶梯模式、3s 指标快照、分位数、增量监控大屏 | ✅ 交付 |
 | M4 报告与打磨 | 报告全区块、错误分析、HTML 导出、定时任务、审计 | ✅ 交付 |
 
 **v2.0 迭代增量**：
@@ -218,6 +221,15 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 - 监控大屏操作按钮（停止任务/查看报告）、错误样本明细修复、事务明细错误率补算
 - 全局 UI 改版（设计令牌 + chartTheme）、侧栏折叠、任务整页编辑
 - 演示环境：docker 一键部署 + seed 混合压测示例（含 /api/mix/* mock 服务）
+
+**v2.1 功能加固**：
+- 修复定时时间解析格式错误；服务端测试去除本地 MySQL 强依赖
+- 固定 TPS 改为业务迭代边界限速，串行链路不再按 HTTP sampler 总数稀释 TPS
+- 新增 `PARTIAL_FAILED/CANCELLED/STOPPED` 语义，所有节点终态后再计算任务结果并生成报告
+- 节点默认独占，启动校验在线状态、引擎版本一致性及 CPU/内存余量
+- Agent 使用服务端时钟偏移和统一 `startAt` 起跑；状态时间、PID 与孤儿清理支持重启恢复
+- JTL 紧凑列、追尾读取、迟到缓冲和网络重试；任务目录默认保留 7 天后清理
+- 监控增量 API、数据库窗口索引、前端增量合并，降低长时间任务轮询成本
 
 ## 11. 工程结构（实际）
 

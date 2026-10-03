@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 指标快照实体：对应表 metric_snapshot，Agent 每 10 秒窗口上报的采样器聚合指标。
+ * 指标快照实体：对应表 metric_snapshot，Agent 按配置窗口（默认 3 秒）上报的采样器聚合指标。
  * 唯一键 (task_id,node_key,sampler,window_start) 保证上报幂等：冲突时整行覆盖更新
  */
 @Data
@@ -28,7 +28,7 @@ public class MetricSnapshot {
     /** 采样器名称 */
     private String sampler;
 
-    /** 窗口起点毫秒（对齐整 10s） */
+    /** 窗口起点毫秒（按 Agent 配置窗口对齐） */
     private Long windowStart;
 
     /** 窗口终点毫秒 */

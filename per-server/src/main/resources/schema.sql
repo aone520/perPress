@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS `test_task` (
   `config_json` VARCHAR(2048) NOT NULL COMMENT '模式参数',
   `node_keys` VARCHAR(2048) NOT NULL COMMENT '参测节点逗号分隔',
   `file_dispatch_json` VARCHAR(2048) COMMENT '文件分发策略[{fileId,mode:SHARED|SPLIT}]',
-  `status` VARCHAR(16) NOT NULL DEFAULT 'CREATED' COMMENT 'CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'CREATED' COMMENT 'CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED/PARTIAL_FAILED/CANCELLED',
+  `status_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '当前状态开始时间',
   `start_time` DATETIME, `end_time` DATETIME,
   `create_by` VARCHAR(64), `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
@@ -116,27 +117,28 @@ CREATE TABLE IF NOT EXISTS `task_node` (
 -- M3：指标上报 / 报告聚合 / 任务脚本快照
 -- =====================================================
 
--- 指标快照表：Agent 每 10 秒窗口上报的采样器聚合指标（按窗口对齐整 10s，唯一键保证幂等）
+-- 指标快照表：Agent 按配置窗口（默认 3 秒）上报采样器聚合指标（唯一键保证幂等）
 CREATE TABLE IF NOT EXISTS `metric_snapshot` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `task_id` BIGINT NOT NULL,
   `node_key` VARCHAR(64) NOT NULL,
   `sampler` VARCHAR(256) NOT NULL,
-  `window_start` BIGINT NOT NULL COMMENT '窗口起点毫秒(对齐整10s)',
+  `window_start` BIGINT NOT NULL COMMENT '窗口起点毫秒(按Agent配置窗口对齐)',
   `window_end` BIGINT NOT NULL,
   `sample_count` BIGINT DEFAULT 0, `error_count` BIGINT DEFAULT 0,
   `bytes` BIGINT DEFAULT 0, `sent_bytes` BIGINT DEFAULT 0,
   `active_threads` INT DEFAULT 0,
   `min_ms` INT, `max_ms` INT, `sum_ms` BIGINT DEFAULT 0,
   `buckets` VARCHAR(1024) COMMENT '对数桶计数,逗号分隔(桶定义见服务注释)',
-  UNIQUE KEY `uk_snap` (`task_id`,`node_key`,`sampler`,`window_start`)
+  UNIQUE KEY `uk_snap` (`task_id`,`node_key`,`sampler`,`window_start`),
+  KEY `idx_task_window` (`task_id`,`window_start`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- 错误样本表：失败样本明细（每任务累计保留前 200 条）
 CREATE TABLE IF NOT EXISTS `error_sample` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `task_id` BIGINT NOT NULL, `node_key` VARCHAR(64),
-  `sampler` VARCHAR(256), `response_code` VARCHAR(32), `message` VARCHAR(1024),
+  `sampler` VARCHAR(256), `response_code` VARCHAR(255), `message` VARCHAR(1024),
   `ts` BIGINT COMMENT '样本时间戳毫秒',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
   KEY `idx_task` (`task_id`)

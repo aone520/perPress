@@ -165,7 +165,11 @@
           </el-form-item>
           <el-form-item label="线程上限">
             <el-input-number v-model="form.maxThreads" :min="1" :step="100" />
-            <span class="unit-text">可选，留空默认 min(tps*2, 2000)</span>
+            <span class="unit-text">可选；留空按 TPS × 预期RT × 1.5 自动估算</span>
+          </el-form-item>
+          <el-form-item label="预期RT">
+            <el-input-number v-model="form.expectedResponseMs" :min="1" :max="60000" :step="10" />
+            <span class="unit-text">毫秒，用于自动计算所需线程数</span>
           </el-form-item>
         </el-form>
 
@@ -201,6 +205,10 @@
             <el-form-item label="封顶持续">
               <el-input-number v-model="form.peakSeconds" :min="1" :step="60" />
               <span class="unit-text">秒（升至峰值后保持时长）</span>
+            </el-form-item>
+            <el-form-item v-if="form.unit === 'TPS'" label="预期RT">
+              <el-input-number v-model="form.expectedResponseMs" :min="1" :max="60000" :step="10" />
+              <span class="unit-text">毫秒，用于每段自动计算线程数</span>
             </el-form-item>
           </el-form>
           <!-- 阶梯时间线预览：按公式推导总时长，非整除时给出提示 -->
@@ -437,8 +445,8 @@ const loading = ref(false)
 /** 各压测模式的配置默认值（切换模式时重置为对应默认） */
 const MODE_DEFAULT_CONFIG = {
   CONCURRENT: { threads: 100, rampupSeconds: 60, durationSeconds: 300 },
-  FIXED_TPS: { tps: 500, rampupSeconds: 10, durationSeconds: 300, maxThreads: null },
-  STEPPED: { unit: 'THREADS', start: 10, step: 10, stepSeconds: 120, peak: 100, peakSeconds: 600, rampupSeconds: 5 }
+  FIXED_TPS: { tps: 500, rampupSeconds: 10, durationSeconds: 300, maxThreads: null, expectedResponseMs: 100 },
+  STEPPED: { unit: 'THREADS', start: 10, step: 10, stepSeconds: 120, peak: 100, peakSeconds: 600, rampupSeconds: 5, expectedResponseMs: 100 }
 }
 
 /** 全部模式配置字段默认值合并（打开页面时初始化 / 编辑时作为兜底） */
@@ -455,6 +463,7 @@ const CONFIG_FIELDS = [
   'durationSeconds',
   'tps',
   'maxThreads',
+  'expectedResponseMs',
   'unit',
   'start',
   'step',
@@ -1021,7 +1030,8 @@ function buildModeConfig() {
     const config = {
       tps: form.tps,
       rampupSeconds: form.rampupSeconds,
-      durationSeconds: form.durationSeconds
+      durationSeconds: form.durationSeconds,
+      expectedResponseMs: form.expectedResponseMs
     }
     // 线程上限可选：留空时不提交，由服务端按默认规则推导
     if (form.maxThreads) {
@@ -1040,7 +1050,7 @@ function buildModeConfig() {
     }
     return config
   }
-  return {
+  const config = {
     unit: form.unit,
     start: form.start,
     step: form.step,
@@ -1049,6 +1059,10 @@ function buildModeConfig() {
     peak: form.peak,
     peakSeconds: form.peakSeconds
   }
+  if (form.unit === 'TPS') {
+    config.expectedResponseMs = form.expectedResponseMs
+  }
+  return config
 }
 
 /**

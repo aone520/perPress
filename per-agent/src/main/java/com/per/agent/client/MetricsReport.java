@@ -4,13 +4,13 @@ import java.util.List;
 
 /**
  * 压测指标上报请求体（M3 指标协议，每窗一报）：POST {server}/agent/metrics。
- * <p>Agent 端每 10 秒封一个窗口即上报一次该窗口内全部 label 的聚合数据；
+ * <p>Agent 端按配置窗口（默认 3 秒）上报该窗口内全部 label 的聚合数据；
  * finished=true 表示该任务指标流结束（进程退出后的尾窗或空尾报）。</p>
  *
  * @param taskId      任务 ID
  * @param nodeKey     节点密钥
- * @param windowStart 窗口起始时间戳（毫秒，整 10 秒对齐）
- * @param windowEnd   窗口结束时间戳（= windowStart + 10000）
+ * @param windowStart 窗口起始时间戳（毫秒，按配置窗口对齐）
+ * @param windowEnd   窗口结束时间戳（= windowStart + 配置窗口毫秒数）
  * @param finished    是否为该任务最后一报（true 后服务端可结束此任务指标流）
  * @param samplers    窗口内各 label 的聚合指标数组（无样本的尾报可能为空数组）
  * @param errors      窗口内错误样本明细（最多 10 条）

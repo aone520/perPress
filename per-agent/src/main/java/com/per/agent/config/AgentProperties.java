@@ -40,6 +40,9 @@ public class AgentProperties {
     /** JMeter 堆内存上限（MB）：任务未指定 jmeterHeapMb 时使用的本地默认值 */
     private int jmeterHeapMb = 2048;
 
-    /** 指标上报聚合窗口（毫秒，最小 1000）：窗口越小监控越实时，上报频率相应提高；默认 3 秒 */
+    /** 指标上报聚合窗口（毫秒，最小 1000）：默认 3 秒，兼顾实时性与聚合开销 */
     private long metricsWindowMs = 3000;
+
+    /** 已结束任务工作目录保留天数 */
+    private int taskRetentionDays = 7;
 }

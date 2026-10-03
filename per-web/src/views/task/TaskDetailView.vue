@@ -30,7 +30,7 @@
                 监控大屏
               </el-button>
               <el-button
-                v-if="task.status === 'FINISHED'"
+                v-if="['FINISHED', 'PARTIAL_FAILED', 'CANCELLED'].includes(task.status)"
                 type="primary"
                 :icon="TrendCharts"
                 @click="goReport"
@@ -63,7 +63,7 @@
                 :icon="VideoPause"
                 @click="handleStop"
               >
-                停止任务
+                {{ stopButtonLabel(task) }}
               </el-button>
             </div>
           </div>
@@ -279,9 +279,11 @@ import { detail as taskDetail, startTask, stopTask } from '@/api/task'
 import { detail as scriptDetail } from '@/api/script'
 import { page as pageFiles } from '@/api/file'
 import { formatDateTime } from '@/utils/format'
+import { useTaskCountdown } from '@/composables/useTaskCountdown'
 
 const route = useRoute()
 const router = useRouter()
+const { stopButtonLabel } = useTaskCountdown()
 
 /** 任务状态元信息：展示文案与 tag 颜色 */
 const TASK_STATUS_META = {
@@ -290,7 +292,9 @@ const TASK_STATUS_META = {
   RUNNING: { text: '运行中', type: 'success' },
   STOPPING: { text: '停止中', type: 'warning' },
   FINISHED: { text: '已完成', type: 'primary' },
-  FAILED: { text: '失败', type: 'danger' }
+  FAILED: { text: '失败', type: 'danger' },
+  PARTIAL_FAILED: { text: '部分失败', type: 'warning' },
+  CANCELLED: { text: '已取消', type: 'info' }
 }
 
 /** 节点执行状态元信息：展示文案与 tag 颜色（READY 青色通过自定义样式实现） */
@@ -306,7 +310,7 @@ const NODE_STATUS_META = {
 }
 
 /** 任务终态集合：到达终态后停止轮询 */
-const TERMINAL_STATUSES = ['FINISHED', 'FAILED']
+const TERMINAL_STATUSES = ['FINISHED', 'FAILED', 'PARTIAL_FAILED', 'CANCELLED']
 
 /** 轮询间隔（毫秒） */
 const POLL_INTERVAL = 5000
@@ -332,7 +336,7 @@ const modeConfigRows = computed(() => {
       { label: '持续时长', value: `${c.durationSeconds ?? '-'} 秒` },
       {
         label: '线程上限',
-        value: c.maxThreads ?? '自动 min(tps×2, 2000)'
+        value: c.maxThreads ?? `自动（预期RT ${c.expectedResponseMs ?? 100}ms，预留50%）`
       }
     )
   } else if (mode === 'STEPPED') {
@@ -346,6 +350,9 @@ const modeConfigRows = computed(() => {
       { label: '峰值', value: `${c.peak ?? '-'} ${unitName}` },
       { label: '封顶持续', value: `${c.peakSeconds ?? '-'} 秒` }
     )
+    if (c.unit === 'TPS') {
+      rows.push({ label: '预期RT', value: `${c.expectedResponseMs ?? 100} ms` })
+    }
   } else {
     rows.push(
       { label: '总并发', value: c.threads ?? '-' },

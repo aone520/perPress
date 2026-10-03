@@ -45,7 +45,7 @@ public class TaskVO {
     /** 文件分发策略（file_dispatch_json 解析后的 JSON 节点） */
     private JsonNode fileDispatch;
 
-    /** 任务状态：CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED */
+    /** 任务状态：CREATED/PREPARING/RUNNING/STOPPING/FINISHED/FAILED/PARTIAL_FAILED/CANCELLED */
     private String status;
 
     /** 触发方式：MANUAL 立即手动 / SCHEDULED 定时 */
