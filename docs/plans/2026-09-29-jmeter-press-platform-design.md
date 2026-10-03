@@ -50,7 +50,7 @@
 | Server | Java 17 + Spring Boot 3.2 + MyBatis-Plus + MySQL 8 + jjwt + BCrypt |
 | Agent | Java 17 + 精简 Spring Boot（非 Web 模式）+ java.net.http.HttpClient + OSHI（资源采样） |
 | 压测引擎 | JMeter 5.6.3 由平台统一下发；吞吐控制用 **Constant Throughput Timer（calcMode=0 每线程限速）**，漏斗用 **ThroughputController（percentThroughput）** |
-| 指标 | JTL 逐行解析 + **MetricBuckets 桶合并分位数**（P50/P75/P90/P95/P99/P999），10s 窗口快照 |
+| 指标 | JTL 逐行解析 + **MetricBuckets 桶合并分位数**（P50/P75/P90/P95/P99/P999），**3s 窗口**快照（`per.agent.metrics-window-ms` 默认 3000，最小 1000） |
 | 前端 | Vue 3 + Vite + Element Plus + Pinia + vue-router + axios + ECharts（chartTheme 统一主题 + 设计令牌体系） |
 | 实时监控 | 前端 **3s 轮询**（未用 SSE，架构更简单） |
 | 部署 | docker-compose（mysql+server+nginx+demo-target+agent×3）；Agent install.sh |
@@ -88,7 +88,7 @@
 
 ```
 CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测模式重渲染 JMX + 文件分片 + -J 参数包)
-→ 节点准备(增量下载→MD5校验→READY回执) → RUNNING(START→10s快照上报)
+→ 节点准备(增量下载→MD5校验→READY回执) → RUNNING(START→3s指标快照上报)
 → STOPPING(时长到/手动/异常) → FINISHED(聚合报告) / FAILED
 ```
 
@@ -127,9 +127,10 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 
 ### 5.6 指标采集与分位数
 
-- Agent 解析 JMeter JTL，按 10s 窗口聚合快照上报（样本数/错误/RT 桶/活跃线程/字节）
+- Agent 解析 JMeter JTL，按 **3s 窗口**（`per.agent.metrics-window-ms`，可配）聚合快照上报（样本数/错误/RT 桶/活跃线程/字节）
 - Server 按 (taskId, nodeKey, sampler, windowStart) 幂等入库，MetricBuckets 桶合并计算全局分位数
 - 错误样本每窗口限 10 条、全任务累计前 200 条（ts/sampler/responseCode/message 对齐前端字段）
+- 与心跳通道区分：指标上报 3s；心跳（资源快照）10s
 
 ### 5.7 一键调试（不落库、不依赖压测节点）
 
@@ -159,7 +160,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 | `data_file` | 文件库（CSV/TXT/JAR/BIN，md5 去重存储） |
 | `test_task` / `task_node` | 任务与节点关联（状态/分片/-J 参数） |
 | `task_script_snapshot` | 任务脚本快照（按模式重渲染的 JMX） |
-| `metric_snapshot` | 10s 指标快照（按 taskId/nodeKey/sampler/windowStart 幂等） |
+| `metric_snapshot` | 3s 指标快照（按 taskId/nodeKey/sampler/windowStart 幂等） |
 | `error_sample` | 错误样本明细（前 200 条） |
 | `test_report` | 任务结束固化聚合报告（5 个 JSON 分区） |
 | `node_resource_sample` | 任务期间压力机资源采样（CPU/内存/网络收发） |
@@ -205,7 +206,7 @@ CREATED → 校验(脚本/节点在线/文件) → 快照(脚本版本按压测�
 |---|---|---|
 | M1 基座 | 用户/JWT、节点注册/心跳/标签、Agent 骨架、前端布局/节点管理 | ✅ 交付 |
 | M2 脚本与执行 | JMX 导入+文件库+版本、并发模式全流程、-J 参数化、文件公用/拆分 | ✅ 交付 |
-| M3 模式与统计 | TPS/阶梯模式、10s 快照、分位数、监控大屏 | ✅ 交付 |
+| M3 模式与统计 | TPS/阶梯模式、3s 指标快照、分位数、监控大屏 | ✅ 交付 |
 | M4 报告与打磨 | 报告全区块、错误分析、HTML 导出、定时任务、审计 | ✅ 交付 |
 
 **v2.0 迭代增量**：
