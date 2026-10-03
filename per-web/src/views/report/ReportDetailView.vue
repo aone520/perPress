@@ -137,7 +137,38 @@
             <el-table-column label="流量" min-width="110" align="right">
               <template #default="{ row }">{{ formatBytes(row.bytes) }}</template>
             </el-table-column>
+            <!-- 压力机资源峰值（心跳通道采样；历史任务无数据时显示 -） -->
+            <el-table-column label="CPU峰值" width="90" align="right">
+              <template #default="{ row }">{{ row.cpuPeak != null ? row.cpuPeak + '%' : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="MEM峰值" width="90" align="right">
+              <template #default="{ row }">{{ row.memPeak != null ? row.memPeak + '%' : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="网络峰值" width="100" align="right">
+              <template #default="{ row }">
+                {{ row.netPeakBps != null ? ((row.netPeakBps * 8) / 1e6).toFixed(2) + ' Mbps' : '-' }}
+              </template>
+            </el-table-column>
           </el-table>
+        </div>
+
+        <!-- ⑥+ 压力机资源曲线（任务期间心跳采样，TPS 上不去时可同屏判断压力机瓶颈） -->
+        <div v-if="hasNodeResources" class="page-card block-card">
+          <div class="card-title">压力机资源</div>
+          <el-row :gutter="12">
+            <el-col :span="8">
+              <div class="sub-title">CPU 使用率（%）</div>
+              <div ref="nodeCpuChartRef" class="chart-box" />
+            </el-col>
+            <el-col :span="8">
+              <div class="sub-title">内存使用率（%）</div>
+              <div ref="nodeMemChartRef" class="chart-box" />
+            </el-col>
+            <el-col :span="8">
+              <div class="sub-title">网络带宽（Mbps，收+发合计，悬浮看分解）</div>
+              <div ref="nodeNetChartRef" class="chart-box" />
+            </el-col>
+          </el-row>
         </div>
 
         <!-- ⑦ 错误分析 -->
@@ -276,9 +307,16 @@ const exporting = ref(false)
 const rtChartRef = ref(null)
 const tpsChartRef = ref(null)
 const errChartRef = ref(null)
+/** 压力机资源双图容器 ref（有采样数据才渲染） */
+const nodeCpuChartRef = ref(null)
+const nodeMemChartRef = ref(null)
+const nodeNetChartRef = ref(null)
 let rtChart = null
 let tpsChart = null
 let errChart = null
+let nodeCpuChart = null
+let nodeMemChart = null
+let nodeNetChart = null
 
 /** 报告摘要（无数据时给空对象兜底） */
 const summary = computed(() => report.value?.summary || {})
@@ -287,6 +325,11 @@ const summary = computed(() => report.value?.summary || {})
 const series = computed(() => report.value?.series || [])
 const samplers = computed(() => withErrorRate(report.value?.samplers || []))
 const nodes = computed(() => report.value?.nodes || [])
+
+/** 是否存在压力机资源采样（历史任务无数据时隐藏资源图区块） */
+const hasNodeResources = computed(() =>
+  nodes.value.some((row) => Array.isArray(row.resources) && row.resources.length)
+)
 
 /**
  * 为统计行补算错误率（%）：后端未返回 errorRate 时由 errorCount/count 计算，
@@ -509,7 +552,107 @@ function renderErrChart() {
 }
 
 /**
- * 初始化三张图表实例（容器随报告模板渲染后才存在，需懒初始化）
+ * 渲染压力机资源双图（CPU%/MEM%，每节点一条线）：
+ * 各节点心跳采样按序号对齐（采样同为 10 秒粒度，误差可忽略），x 轴取采样最多节点的时间列
+ * @param {string} metric 资源字段：cpu / mem
+ * @param {object|null} chart 图表实例（未初始化时跳过）
+ */
+function renderNodeResChart(metric, chart) {
+  const rows = nodes.value.filter((row) => (row.resources || []).length)
+  if (!chart || !rows.length) {
+    return
+  }
+  // x 轴时间取采样点最多的节点（各节点点数基本一致）
+  const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
+  const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
+  chart.setOption(
+    {
+      tooltip: chartTooltip(),
+      legend: chartLegend(rows.map((row) => nodeLabel(row))),
+      grid: CHART_GRID,
+      xAxis: baseXAxis(longest.resources),
+      yAxis: [{ ...chartValueAxis(metric === 'cpu' ? 'CPU%' : 'MEM%'), max: 100 }],
+      series: rows.map((row, i) => chartLine(
+        nodeLabel(row),
+        row.resources.map((point) => Number(point[metric]) || 0),
+        palette[i % palette.length]
+      ))
+    },
+    true
+  )
+}
+
+/**
+ * 渲染压力机 CPU/内存两张资源曲线
+ */
+function renderNodeResCharts() {
+  renderNodeResChart('cpu', nodeCpuChart)
+  renderNodeResChart('mem', nodeMemChart)
+  renderNodeNetChart()
+}
+
+/**
+ * 渲染压力机网络带宽图（Mbps）：每节点一条线 = 收+发合计，
+ * 收发分解保留在 tooltip 明细中（hover 查看），主线保持简洁
+ */
+function renderNodeNetChart() {
+  const rows = nodes.value.filter((row) => (row.resources || []).length)
+  if (!nodeNetChart || !rows.length) {
+    return
+  }
+  const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
+  const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
+  const series = rows.map((row, i) => chartLine(
+    nodeLabel(row),
+    row.resources.map((p) => bpsToMbps((Number(p.recvBps) || 0) + (Number(p.sentBps) || 0))),
+    palette[i % palette.length]
+  ))
+  nodeNetChart.setOption(
+    {
+      tooltip: {
+        ...chartTooltip(),
+        formatter: (params) => {
+          const idx = Array.isArray(params) ? params[0].dataIndex : params.dataIndex
+          const lines = [params[0].axisValueLabel]
+          rows.forEach((row) => {
+            const point = row.resources[Math.min(idx, row.resources.length - 1)] || {}
+            const recv = bpsToMbps(point.recvBps)
+            const sent = bpsToMbps(point.sentBps)
+            lines.push(`${nodeLabel(row)}：合计 ${bpsToMbps((Number(point.recvBps) || 0) + (Number(point.sentBps) || 0))} Mbps（收 ${recv} / 发 ${sent}）`)
+          })
+          return lines.join('<br/>')
+        }
+      },
+      legend: chartLegend(rows.map((row) => nodeLabel(row))),
+      grid: CHART_GRID,
+      xAxis: baseXAxis(longest.resources),
+      yAxis: [{ ...chartValueAxis('Mbps') }],
+      series
+    },
+    true
+  )
+}
+
+/**
+ * 字节/秒转 Mbps（保留两位小数）
+ * @param {number|string} bps 字节每秒
+ * @returns {number} Mbps
+ */
+function bpsToMbps(bps) {
+  return Math.round((((Number(bps) || 0) * 8) / 1e6) * 100) / 100
+}
+
+/**
+ * 节点展示名：主机名优先，缺失回退 nodeKey 缩略
+ * @param {Object} row 节点行
+ * @returns {string} 展示名
+ */
+function nodeLabel(row) {
+  return row.hostname || shortNodeKey(row.nodeKey)
+}
+
+/**
+ * 初始化图表实例（容器随报告模板渲染后才存在，需懒初始化）
  */
 function ensureCharts() {
   if (rtChartRef.value && !rtChart) {
@@ -520,6 +663,15 @@ function ensureCharts() {
   }
   if (errChartRef.value && !errChart) {
     errChart = echarts.init(errChartRef.value)
+  }
+  if (nodeCpuChartRef.value && !nodeCpuChart) {
+    nodeCpuChart = echarts.init(nodeCpuChartRef.value)
+  }
+  if (nodeMemChartRef.value && !nodeMemChart) {
+    nodeMemChart = echarts.init(nodeMemChartRef.value)
+  }
+  if (nodeNetChartRef.value && !nodeNetChart) {
+    nodeNetChart = echarts.init(nodeNetChartRef.value)
   }
 }
 
@@ -536,6 +688,7 @@ async function load() {
     renderRtChart()
     renderTpsChart()
     renderErrChart()
+    renderNodeResCharts()
   } catch {
     // 错误提示已由 http.js 拦截器统一弹出
   } finally {
@@ -601,6 +754,9 @@ function handleResize() {
   rtChart?.resize()
   tpsChart?.resize()
   errChart?.resize()
+  nodeCpuChart?.resize()
+  nodeMemChart?.resize()
+  nodeNetChart?.resize()
 }
 
 // 页面挂载：注册 resize 监听并加载数据（图表初始化由 load 内懒执行）
@@ -615,9 +771,15 @@ onUnmounted(() => {
   rtChart?.dispose()
   tpsChart?.dispose()
   errChart?.dispose()
+  nodeCpuChart?.dispose()
+  nodeMemChart?.dispose()
+  nodeNetChart?.dispose()
   rtChart = null
   tpsChart = null
   errChart = null
+  nodeCpuChart = null
+  nodeMemChart = null
+  nodeNetChart = null
 })
 </script>
 

@@ -174,12 +174,14 @@ public class AgentLifecycle implements ApplicationRunner {
     }
 
     /**
-     * 构建心跳请求体：采集本机真实资源快照（会话恢复探测复用同一结构）。
+     * 构建心跳请求体：采集本机真实资源快照（会话恢复探测复用同一结构），
+     * 含网络收发速率（物理网卡累计字节差分）。
      *
      * @param nodeKey 节点密钥
      * @return 心跳请求体
      */
     private HeartbeatRequest buildHeartbeatRequest(String nodeKey) {
+        double[] netBps = resourceCollector.collectNetBps();
         return new HeartbeatRequest(
                 nodeKey,
                 resourceCollector.collectCpuUsage(),
@@ -187,6 +189,8 @@ public class AgentLifecycle implements ApplicationRunner {
                 resourceCollector.collectMemTotal(),
                 resourceCollector.collectJvmMemUsed(),
                 resourceCollector.collectJvmMemMax(),
+                netBps[0],
+                netBps[1],
                 engineManager.getDeployedVersion(),
                 AgentVersion.VERSION);
     }

@@ -9,10 +9,12 @@ import com.per.server.dto.TaskReportVO;
 import com.per.server.entity.ErrorSample;
 import com.per.server.entity.MetricSnapshot;
 import com.per.server.entity.Node;
+import com.per.server.entity.NodeResourceSample;
 import com.per.server.entity.TestReport;
 import com.per.server.entity.TestTask;
 import com.per.server.mapper.ErrorSampleMapper;
 import com.per.server.mapper.NodeMapper;
+import com.per.server.mapper.NodeResourceSampleMapper;
 import com.per.server.mapper.TestReportMapper;
 import com.per.server.mapper.TestTaskMapper;
 import lombok.RequiredArgsConstructor;
@@ -92,6 +94,7 @@ public class ReportService {
     private final TestTaskMapper taskMapper;
     private final TestReportMapper reportMapper;
     private final ErrorSampleMapper errorSampleMapper;
+    private final NodeResourceSampleMapper resourceSampleMapper;
     private final NodeMapper nodeMapper;
     private final MetricService metricService;
     private final ObjectMapper objectMapper;
@@ -754,6 +757,12 @@ public class ReportService {
         Map<String, Node> nodeInfoMap = nodeMapper.selectList(new LambdaQueryWrapper<Node>()
                         .in(Node::getNodeKey, aggByNode.keySet()))
                 .stream().collect(java.util.stream.Collectors.toMap(Node::getNodeKey, n -> n, (a, b) -> a));
+        // 任务期间压力机资源采样（心跳通道落库）：按节点聚合成时序与峰值，报告绘制资源曲线
+        Map<String, List<NodeResourceSample>> resourceByNode = resourceSampleMapper.selectList(
+                        new LambdaQueryWrapper<NodeResourceSample>()
+                                .eq(NodeResourceSample::getTaskId, taskId)
+                                .orderByAsc(NodeResourceSample::getId))
+                .stream().collect(java.util.stream.Collectors.groupingBy(NodeResourceSample::getNodeKey));
         aggByNode.forEach((nodeKey, agg) -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("nodeKey", nodeKey);
@@ -767,6 +776,7 @@ public class ReportService {
             row.put("p95", round2(MetricBuckets.percentile(agg.buckets, 95)));
             row.put("p99", round2(MetricBuckets.percentile(agg.buckets, 99)));
             row.put("bytes", agg.bytes);
+            appendNodeResources(row, resourceByNode.get(nodeKey));
             nodes.add(row);
         });
 
@@ -779,6 +789,45 @@ public class ReportService {
         sections.errors = errors;
         sections.series = series;
         return sections;
+    }
+
+    /**
+     * 为节点行补充压力机资源信息：resources 时序（t 秒 + cpu/mem 百分比 + 网络收发 B/s，
+     * 与指标序列同时间轴）与 cpuPeak/memPeak/netPeakBps 峰值；
+     * 无采样数据（历史任务）时补空列表，前端隐藏资源图
+     *
+     * @param row     节点展示行（原地写入）
+     * @param samples 该节点任务期间的资源采样列表（可空）
+     */
+    private void appendNodeResources(Map<String, Object> row, List<NodeResourceSample> samples) {
+        List<Map<String, Object>> resources = new ArrayList<>();
+        double cpuPeak = 0;
+        double memPeak = 0;
+        double netPeakBps = 0;
+        if (samples != null) {
+            for (NodeResourceSample sample : samples) {
+                double cpu = sample.getCpuUsage() == null ? 0 : sample.getCpuUsage();
+                double mem = sample.getMemUsage() == null ? 0 : sample.getMemUsage();
+                double recvBps = sample.getNetRecvBps() == null ? 0 : sample.getNetRecvBps();
+                double sentBps = sample.getNetSentBps() == null ? 0 : sample.getNetSentBps();
+                cpuPeak = Math.max(cpuPeak, cpu);
+                memPeak = Math.max(memPeak, mem);
+                netPeakBps = Math.max(netPeakBps, recvBps + sentBps);
+                Map<String, Object> point = new LinkedHashMap<>();
+                point.put("t", epochMs(sample.getCreateTime()) / 1000);
+                point.put("cpu", round2(cpu));
+                point.put("mem", round2(mem));
+                point.put("recvBps", round2(recvBps));
+                point.put("sentBps", round2(sentBps));
+                point.put("jvmMemUsed", sample.getJvmMemUsed());
+                point.put("jvmMemMax", sample.getJvmMemMax());
+                resources.add(point);
+            }
+        }
+        row.put("resources", resources);
+        row.put("cpuPeak", round2(cpuPeak));
+        row.put("memPeak", round2(memPeak));
+        row.put("netPeakBps", round2(netPeakBps));
     }
 
     /**

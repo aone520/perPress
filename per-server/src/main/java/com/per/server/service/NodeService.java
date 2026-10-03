@@ -283,6 +283,8 @@ public class NodeService {
         vo.setMemTotal(node.getMemTotal());
         vo.setJvmMemUsed(node.getJvmMemUsed());
         vo.setJvmMemMax(node.getJvmMemMax());
+        vo.setNetRecvBps(node.getNetRecvBps());
+        vo.setNetSentBps(node.getNetSentBps());
         vo.setLastHeartbeatTime(node.getLastHeartbeatTime());
         vo.setCreateTime(node.getCreateTime());
         return vo;

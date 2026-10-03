@@ -57,12 +57,13 @@ public class HeartbeatTask {
     }
 
     /**
-     * 执行一次心跳：未完成注册前静默跳过，否则采集资源快照并上报。
+     * 执行一次心跳：未完成注册前静默跳过，否则采集资源快照（含网络收发速率）并上报。
      */
     private void doHeartbeat() {
         if (!lifecycle.isRegistered()) {
             return;
         }
+        double[] netBps = resourceCollector.collectNetBps();
         HeartbeatRequest request = new HeartbeatRequest(
                 lifecycle.currentNodeKey(),
                 resourceCollector.collectCpuUsage(),
@@ -70,6 +71,8 @@ public class HeartbeatTask {
                 resourceCollector.collectMemTotal(),
                 resourceCollector.collectJvmMemUsed(),
                 resourceCollector.collectJvmMemMax(),
+                netBps[0],
+                netBps[1],
                 engineManager.getDeployedVersion(),
                 AgentVersion.VERSION);
         HeartbeatResponse response = serverClient.heartbeat(request);

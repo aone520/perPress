@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS `node` (
   `status` VARCHAR(16) NOT NULL DEFAULT 'OFFLINE' COMMENT 'ONLINE/OFFLINE',
   `cpu_usage` DOUBLE, `mem_usage` DOUBLE, `mem_total` BIGINT,
   `jvm_mem_used` BIGINT, `jvm_mem_max` BIGINT,
+  `net_recv_bps` DOUBLE COMMENT '网络接收速率B/s', `net_sent_bps` DOUBLE COMMENT '网络发送速率B/s',
   `last_heartbeat_time` DATETIME,
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -155,4 +156,21 @@ CREATE TABLE IF NOT EXISTS `task_script_snapshot` (
   `task_id` BIGINT PRIMARY KEY,
   `jmx_content` LONGTEXT NOT NULL,
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- 压力机资源采样表：任务运行期间 Agent 心跳携带的资源指标落库（复用低频心跳通道，
+-- 不触碰压测指标链路；报告据此绘制各节点 CPU%/MEM% 曲线）
+CREATE TABLE IF NOT EXISTS `node_resource_sample` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `task_id` BIGINT NOT NULL COMMENT '关联任务ID',
+  `node_key` VARCHAR(64) NOT NULL COMMENT '节点唯一标识',
+  `cpu_usage` DOUBLE NOT NULL COMMENT 'CPU使用率(0-100)',
+  `mem_usage` DOUBLE NOT NULL COMMENT '系统内存使用率(0-100)',
+  `mem_total` BIGINT COMMENT '系统总内存(字节)',
+  `jvm_mem_used` BIGINT COMMENT 'JVM已用堆(字节)',
+  `jvm_mem_max` BIGINT COMMENT 'JVM最大堆(字节)',
+  `net_recv_bps` DOUBLE COMMENT '网络接收速率B/s(物理网卡差分)',
+  `net_sent_bps` DOUBLE COMMENT '网络发送速率B/s(物理网卡差分)',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '采样时间',
+  KEY `idx_task_node` (`task_id`, `node_key`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

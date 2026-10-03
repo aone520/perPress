@@ -8,19 +8,26 @@ import com.per.server.dto.AgentRegisterRequest;
 import com.per.server.dto.AgentRegisterVO;
 import com.per.server.dto.HeartbeatVO;
 import com.per.server.entity.Node;
+import com.per.server.entity.NodeResourceSample;
 import com.per.server.entity.SysConfig;
+import com.per.server.entity.TaskNode;
 import com.per.server.mapper.NodeMapper;
+import com.per.server.mapper.NodeResourceSampleMapper;
 import com.per.server.mapper.SysConfigMapper;
+import com.per.server.mapper.TaskNodeMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Agent 端服务：处理节点注册、心跳上报与命令轮询（/agent/** 免 JWT，由本服务自行校验凭证）
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AgentService {
@@ -33,6 +40,8 @@ public class AgentService {
     private final EnginePackageService enginePackageService;
     private final TaskOrchestrator taskOrchestrator;
     private final NodeService nodeService;
+    private final TaskNodeMapper taskNodeMapper;
+    private final NodeResourceSampleMapper resourceSampleMapper;
 
     /**
      * Agent 节点注册：校验注册 token；同 hostname+ip 的节点已存在则复用其 node_key 并更新信息，
@@ -98,6 +107,8 @@ public class AgentService {
         update.setMemTotal(request.getMemTotal());
         update.setJvmMemUsed(request.getJvmMemUsed());
         update.setJvmMemMax(request.getJvmMemMax());
+        update.setNetRecvBps(request.getNetRecvBps());
+        update.setNetSentBps(request.getNetSentBps());
         if (StringUtils.hasText(request.getEngineVersion())) {
             update.setEngineVersion(request.getEngineVersion());
         }
@@ -107,7 +118,39 @@ public class AgentService {
         update.setStatus(Node.STATUS_ONLINE);
         update.setLastHeartbeatTime(LocalDateTime.now());
         nodeMapper.updateById(update);
+        // 任务运行期间采样压力机资源：复用现有低频心跳通道落库（不触碰压测指标链路），
+        // 报告据此绘制各节点 CPU%/MEM% 曲线；节点无运行中任务时不写库
+        recordResourceSamples(request);
         return new HeartbeatVO(System.currentTimeMillis(), enginePackageService.currentEngine());
+    }
+
+    /**
+     * 记录压力机资源采样：查该节点处于 RUNNING 状态的任务关联，逐任务插入一条资源快照
+     * （一个节点可同时参与多个任务，每个任务各留一份样本；采样异常不影响心跳主流程）
+     *
+     * @param request 心跳请求（含 CPU/内存指标）
+     */
+    private void recordResourceSamples(AgentHeartbeatRequest request) {
+        try {
+            List<TaskNode> runningNodes = taskNodeMapper.selectList(new LambdaQueryWrapper<TaskNode>()
+                    .eq(TaskNode::getNodeKey, request.getNodeKey())
+                    .eq(TaskNode::getStatus, TaskNode.STATUS_RUNNING));
+            for (TaskNode taskNode : runningNodes) {
+                NodeResourceSample sample = new NodeResourceSample();
+                sample.setTaskId(taskNode.getTaskId());
+                sample.setNodeKey(request.getNodeKey());
+                sample.setCpuUsage(request.getCpuUsage());
+                sample.setMemUsage(request.getMemUsage());
+                sample.setMemTotal(request.getMemTotal());
+                sample.setJvmMemUsed(request.getJvmMemUsed());
+                sample.setJvmMemMax(request.getJvmMemMax());
+                sample.setNetRecvBps(request.getNetRecvBps());
+                sample.setNetSentBps(request.getNetSentBps());
+                resourceSampleMapper.insert(sample);
+            }
+        } catch (Exception e) {
+            log.warn("压力机资源采样落库失败（nodeKey={}）：{}", request.getNodeKey(), e.getMessage());
+        }
     }
 
     /**
