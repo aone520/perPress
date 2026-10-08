@@ -119,12 +119,20 @@ services:
     volumes:
       - per-local-agent3-data:/data
 
+  per-agent-4:
+    <<: *agent-base
+    container_name: per-local-agent-4
+    hostname: per-agent-4
+    volumes:
+      - per-local-agent4-data:/data
+
 volumes:
   per-local-mysql-data:
   per-local-server-data:
   per-local-agent1-data:
   per-local-agent2-data:
   per-local-agent3-data:
+  per-local-agent4-data:
 
 networks:
   per-local-net:
