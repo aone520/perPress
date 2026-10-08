@@ -564,7 +564,7 @@ function renderNodeResChart(metric, chart) {
   }
   // x 轴时间取采样点最多的节点（各节点点数基本一致）
   const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
-  const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
+  const palette = NODE_COLORS
   chart.setOption(
     {
       tooltip: chartTooltip(),
@@ -601,7 +601,7 @@ function renderNodeNetChart() {
     return
   }
   const longest = rows.reduce((a, b) => ((b.resources.length > a.resources.length) ? b : a))
-  const palette = [CHART_COLORS.primary, CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.rose]
+  const palette = NODE_COLORS
   const series = rows.map((row, i) => chartLine(
     nodeLabel(row),
     row.resources.map((p) => bpsToMbps((Number(p.recvBps) || 0) + (Number(p.sentBps) || 0))),
@@ -650,6 +650,16 @@ function bpsToMbps(bps) {
 function nodeLabel(row) {
   return row.hostname || shortNodeKey(row.nodeKey)
 }
+
+/** 压力机资源三图的节点配色（取主题真实存在的 6 色，超出轮转） */
+const NODE_COLORS = [
+  CHART_COLORS.primary,
+  CHART_COLORS.teal,
+  CHART_COLORS.amber,
+  CHART_COLORS.rose,
+  CHART_COLORS.violet,
+  CHART_COLORS.slate
+]
 
 /**
  * 初始化图表实例（容器随报告模板渲染后才存在，需懒初始化）
