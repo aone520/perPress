@@ -715,6 +715,11 @@ public class ReportService {
         int nodeCount = StringUtils.hasText(task.getNodeKeys())
                 ? task.getNodeKeys().split(",").length : 0;
         int durationSeconds = resolveDurationSeconds(task, snapshots);
+        // TPS 统一分母：观测窗口时长之和（与事务明细/实时监控同口径）。
+        // 不用任务起止时长——起跑等待与收尾落库延迟会高估分母、低估 TPS；
+        // 无快照的异常任务回退任务时长（最小 1s 防除零）
+        double observedSeconds = metricService.windowSeconds(snapshots);
+        double tpsDivisor = observedSeconds > 0 ? observedSeconds : Math.max(1, durationSeconds);
 
         Map<String, Object> rt = new LinkedHashMap<>();
         rt.put("min", total.minOrNull());
@@ -739,7 +744,7 @@ public class ReportService {
         summary.put("totalErrorCount", total.errorCount);
         summary.put("errorRate", total.count <= 0 ? 0
                 : round2(total.errorCount * 100.0 / total.count));
-        summary.put("avgTps", round2(total.count * 1.0 / durationSeconds));
+        summary.put("avgTps", round2(total.count * 1.0 / tpsDivisor));
         summary.put("peakTps", series.stream()
                 .map(p -> toDouble(p.get("tps")))
                 .max(Double::compare).orElse(0.0));
@@ -773,7 +778,7 @@ public class ReportService {
             row.put("ip", info == null ? null : info.getIp());
             row.put("count", agg.count);
             row.put("errorCount", agg.errorCount);
-            row.put("tps", round2(agg.count * 1.0 / durationSeconds));
+            row.put("tps", round2(agg.count * 1.0 / tpsDivisor));
             row.put("avgMs", agg.avgMs());
             row.put("p95", round2(agg.percentile(95)));
             row.put("p99", round2(agg.percentile(99)));
