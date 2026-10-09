@@ -11,7 +11,7 @@ import router from '@/router'
 
 const http = axios.create({
   baseURL: '/',
-  timeout: 15000
+  timeout: 60000
 })
 
 /** 上一次 401 处理时间戳，用于并发请求下的提示与跳转节流 */
