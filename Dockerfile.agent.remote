@@ -1,0 +1,26 @@
+# =====================================================================
+# per-agent 多阶段构建镜像：源码 → jar → JRE17 运行
+# 供远程仓库部署使用（目标机只需 Docker）；Agent 也可用 install.sh 直装
+# 构建上下文 = 仓库根：docker build -f Dockerfile.agent.remote -t per-agent:latest .
+# =====================================================================
+
+# ---------- 阶段 1：Maven 编译 ----------
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY per-agent/pom.xml ./per-agent/pom.xml
+RUN mvn -f per-agent/pom.xml dependency:go-offline -B -q || true
+COPY per-agent/ ./per-agent/
+RUN mvn -f per-agent/pom.xml clean package -DskipTests -q \
+    && cp per-agent/target/per-agent-*.jar /build/per-agent.jar
+
+# ---------- 阶段 2：JRE 运行镜像 ----------
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /build/per-agent.jar /app/per-agent.jar
+
+ENV TZ=Asia/Shanghai
+# Agent 工作目录（任务/引擎/状态），挂载卷持久化
+RUN mkdir -p /data
+VOLUME /data
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/per-agent.jar"]

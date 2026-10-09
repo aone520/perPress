@@ -1,0 +1,77 @@
+# =====================================================================
+# PerPress 远程仓库一键部署 compose：mysql + per-server + nginx(前端)
+# 镜像由多阶段 Dockerfile 从源码构建（目标机只需 Docker）
+#
+# 用法（任意目录执行，详见 deploy/deploy-remote.sh）：
+#   bash deploy/deploy-remote.sh https://github.com/aone520/perPress.git
+# 或手动：
+#   git clone <repo> && cd perPress/deploy
+#   docker compose -f docker-compose.remote.yml up -d --build
+#
+# 端口（可环境变量覆盖避免冲突）：
+#   PER_HTTP_PORT  平台页面（默认 80）    PER_API_PORT  API 直连（默认 8080）
+# =====================================================================
+services:
+  per-mysql:
+    image: mysql:8.0
+    container_name: per-remote-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-perpress@2026}
+      MYSQL_DATABASE: per_press
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    volumes:
+      - per-remote-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-perpress@2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [per-remote-net]
+
+  per-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile.server.remote
+    image: per-server:latest
+    container_name: per-remote-server
+    restart: always
+    depends_on:
+      per-mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:mysql://per-mysql:3306/per_press?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-perpress@2026}
+      PER_STORAGE_DIR: /data
+      # 平台对外地址（Agent 用其注册/心跳/下载）：改为部署机实际 IP 或域名
+      PER_SERVER_BASE_URL: ${PER_PUBLIC_URL:-http://127.0.0.1:${PER_API_PORT:-8080}}
+      # 初始注册 token（首次启动写入，Agent 安装时使用）
+      PER_REGISTER_DEFAULT_TOKEN: ${PER_REGISTER_TOKEN:-perpress-remote-token}
+      PER_JWT_SECRET: ${PER_JWT_SECRET:-perpress-secret-key-please-change-in-production-0123456789}
+    volumes:
+      - per-remote-server-data:/data
+    ports:
+      - "${PER_API_PORT:-8080}:8080"
+    networks: [per-remote-net]
+
+  per-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web.remote
+    image: per-web:latest
+    container_name: per-remote-web
+    restart: always
+    depends_on: [per-server]
+    ports:
+      - "${PER_HTTP_PORT:-80}:80"
+    networks: [per-remote-net]
+
+volumes:
+  per-remote-mysql-data:
+  per-remote-server-data:
+
+networks:
+  per-remote-net:
