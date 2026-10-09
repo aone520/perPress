@@ -76,7 +76,7 @@ if [ -f "$SCRIPT_DIR/../Dockerfile.server.remote" ] || [ "$NO_PULL" = "1" ]; the
 else
   # 全新克隆（浅克隆加速）
   CLONE_DIR="${CLONE_DIR:-/tmp/perpress-remote}"
-  echo "克隆仓库 $REPO_URL（$BRANCH 分支）到 $CLONE_DIR ..."
+  echo "克隆仓库 ${REPO_URL}（$BRANCH 分支）到 $CLONE_DIR ..."
   if [ -d "$CLONE_DIR/.git" ]; then
     git -C "$CLONE_DIR" fetch origin "$BRANCH" --depth 1 2>/dev/null \
       && git -C "$CLONE_DIR" reset -q --hard "origin/$BRANCH" \
@@ -112,7 +112,7 @@ docker build -f Dockerfile.web.remote    -t per-web:latest .
 # ---------- 第 2 步：创建网络与数据卷（已存在则复用，幂等） ----------
 echo ""
 echo "[2/5] 创建网络 $NET_NAME 与数据卷 ..."
-docker network create "$NET_NAME" 2>/dev/null || echo "  网络 $NET_NAME 已存在，复用"
+docker network create "$NET_NAME" 2>/dev/null || echo "  网络 ${NET_NAME} 已存在，复用"
 docker volume create "$MYSQL_VOLUME"   >/dev/null
 docker volume create "$SERVER_VOLUME"  >/dev/null
 
@@ -180,11 +180,11 @@ for i in $(seq 1 30); do
     echo ""
     echo "  平台页面:   http://localhost:${HTTP_PORT}     (admin / admin123)"
     echo "  API 直连:   http://localhost:${API_PORT}"
-    echo "  对外地址:   $PUBLIC_URL（压力机 Agent 用）"
+    echo "  对外地址:   ${PUBLIC_URL}（压力机 Agent 用）"
     echo ""
     echo "  接入压力机："
     echo "    1. 平台「节点管理」复制安装命令（install.sh）"
-    echo "    2. 到压力机执行即可自动注册（需能访问 $PUBLIC_URL）"
+    echo "    2. 到压力机执行即可自动注册（需能访问 ${PUBLIC_URL}）"
     echo "    3. 「引擎管理」上传 JMeter 引擎 zip，Agent 将自动部署引擎"
     echo ""
     echo "  常用操作（纯 docker 命令）："
