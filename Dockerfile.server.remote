@@ -1,0 +1,28 @@
+# =====================================================================
+# per-server 多阶段构建镜像：源码 → jar → JRE17 运行
+# 供远程仓库部署使用（目标机只需 Docker，无需本机 Maven/JDK）
+# 构建上下文 = 仓库根：docker build -f Dockerfile.server.remote -t per-server:latest .
+# =====================================================================
+
+# ---------- 阶段 1：Maven 编译（per-server 为独立工程，带缓存层加速重复构建） ----------
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+# 先拷 pom 单独下载依赖（源码变动时命中缓存层）
+COPY per-server/pom.xml ./per-server/pom.xml
+RUN mvn -f per-server/pom.xml dependency:go-offline -B -q || true
+# 再拷源码打包（跳过测试，部署镜像不含测试依赖执行）
+COPY per-server/ ./per-server/
+RUN mvn -f per-server/pom.xml clean package -DskipTests -q
+
+# ---------- 阶段 2：JRE 运行镜像 ----------
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /build/per-server/target/per-server-*.jar /app/per-server.jar
+
+# 平台数据目录（文件存储/引擎包/Agent分发包），挂载卷持久化
+ENV TZ=Asia/Shanghai
+RUN mkdir -p /data
+VOLUME /data
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/per-server.jar"]
