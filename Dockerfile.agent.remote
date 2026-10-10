@@ -2,6 +2,10 @@
 # per-agent 多阶段构建镜像：源码 → jar → JRE17 运行
 # 供远程仓库部署使用（目标机只需 Docker）；Agent 也可用 install.sh 直装
 # 构建上下文 = 仓库根：docker build -f Dockerfile.agent.remote -t per-agent:latest .
+#
+# 除运行镜像外，构建阶段还产出 Agent 一键安装分发包：
+#   /dist/per-agent-dist.tar.gz（jar+启动脚本+配置模板+systemd 单元），
+#   部署脚本从镜像拷出放入 per-server 数据卷，节点安装命令即可用
 # =====================================================================
 
 # ---------- 阶段 1：Maven 编译 ----------
@@ -10,13 +14,18 @@ WORKDIR /build
 COPY per-agent/pom.xml ./per-agent/pom.xml
 RUN mvn -f per-agent/pom.xml dependency:go-offline -B -q || true
 COPY per-agent/ ./per-agent/
+# 分发包组装脚本（复用 scripts/build-agent-dist.sh，PER_AGENT_SKIP_BUILD 跳过二次编译）
+COPY scripts/ ./scripts/
 RUN mvn -f per-agent/pom.xml clean package -DskipTests -q \
-    && cp per-agent/target/per-agent-*.jar /build/per-agent.jar
+    && cp per-agent/target/per-agent-*.jar /build/per-agent.jar \
+    && PER_AGENT_SKIP_BUILD=1 bash scripts/build-agent-dist.sh
 
 # ---------- 阶段 2：JRE 运行镜像 ----------
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /build/per-agent.jar /app/per-agent.jar
+# 一键安装分发包（供部署脚本 docker cp 拷出，运行容器不使用）
+COPY --from=build /build/per-agent/target/per-agent-dist.tar.gz /dist/per-agent-dist.tar.gz
 
 ENV TZ=Asia/Shanghai
 # Agent 工作目录（任务/引擎/状态），挂载卷持久化

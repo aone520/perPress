@@ -105,9 +105,10 @@ echo "========================================"
 
 # ---------- 第 1 步：构建镜像（多阶段构建，容器内编译；首次约 5-10 分钟） ----------
 echo ""
-echo "[1/5] 构建镜像 per-server / per-web ..."
+echo "[1/5] 构建镜像 per-server / per-web / per-agent ..."
 docker build -f Dockerfile.server.remote -t per-server:latest .
 docker build -f Dockerfile.web.remote    -t per-web:latest .
+docker build -f Dockerfile.agent.remote  -t per-agent:latest .
 
 # ---------- 第 2 步：创建网络与数据卷（已存在则复用，幂等） ----------
 echo ""
@@ -166,6 +167,19 @@ docker run -d --name "$WEB_CONTAINER" \
   --network "$NET_NAME" --restart always \
   -p "${HTTP_PORT}:80" \
   per-web:latest
+
+# ---------- 第 6 步：放置 Agent 一键安装分发包（agent 镜像构建产物 → server 数据卷） ----------
+# 全新部署的数据卷没有 per-agent-dist.tar.gz（历史上需手工放置），不放置会导致
+# 节点安装命令 404；此处从 agent 镜像 /dist 拷出自动放入，幂等（重复部署覆盖更新）
+echo ""
+echo "[6/6] 放置 Agent 分发包 ..."
+if docker rm -f per-agent-dist-tmp >/dev/null 2>&1; then true; fi
+docker create --name per-agent-dist-tmp --entrypoint true per-agent:latest >/dev/null
+docker cp per-agent-dist-tmp:/dist/per-agent-dist.tar.gz "$REPO_ROOT/per-agent-dist.tar.gz"
+docker rm per-agent-dist-tmp >/dev/null
+docker exec "$SERVER_CONTAINER" mkdir -p /data/agent-dist
+docker cp "$REPO_ROOT/per-agent-dist.tar.gz" "$SERVER_CONTAINER:/data/agent-dist/per-agent-dist.tar.gz"
+echo "  分发包已就位：$SERVER_CONTAINER:/data/agent-dist/per-agent-dist.tar.gz"
 
 # ---------- 就绪探测（server 启动 + 建表最长约 90s） ----------
 echo ""
