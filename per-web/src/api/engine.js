@@ -3,6 +3,9 @@
  */
 import http from './http'
 
+/** 引擎包上传专用超时：zip 体积大 + 服务端校验耗时，单独放宽到 1 小时（其他接口沿用全局 60s） */
+const ENGINE_UPLOAD_TIMEOUT_MS = 60 * 60 * 1000
+
 /**
  * 上传引擎包
  * @param {FormData} formData 字段：file（zip File）、version、remark
@@ -10,7 +13,8 @@ import http from './http'
  */
 export function upload(formData) {
   return http.post('/api/engines', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: ENGINE_UPLOAD_TIMEOUT_MS
   })
 }
 
