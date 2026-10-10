@@ -460,17 +460,38 @@ async function handleResetToken() {
 }
 
 /**
- * 复制文本到剪贴板，成功/失败给出提示
+ * 复制文本到剪贴板，成功/失败给出提示；
+ * Clipboard API 仅在 HTTPS/localhost 安全上下文可用，HTTP 访问平台（如 http://IP:8081）时
+ * 降级为隐藏 textarea + execCommand('copy') 兜底
  * @param {string} text 待复制的文本
  */
 async function copyText(text) {
   if (!text) {
     return
   }
-  try {
-    await navigator.clipboard.writeText(text)
+  // 安全上下文优先走标准 Clipboard API
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text)
+      ElMessage.success('已复制到剪贴板')
+      return
+    } catch {
+      // 权限拒绝等异常时落入兜底方案
+    }
+  }
+  // HTTP 环境兜底：临时 textarea 全选后 execCommand 复制
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const ok = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (ok) {
     ElMessage.success('已复制到剪贴板')
-  } catch {
+  } else {
     ElMessage.error('复制失败，请手动选择复制')
   }
 }
