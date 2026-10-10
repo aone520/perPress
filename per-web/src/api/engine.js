@@ -1,20 +1,17 @@
 /**
  * 压测引擎包管理接口封装：上传、版本列表与发布
  */
-import http from './http'
-
-/** 引擎包上传专用超时：zip 体积大 + 服务端校验耗时，单独放宽到 1 小时（其他接口沿用全局 60s） */
-const ENGINE_UPLOAD_TIMEOUT_MS = 60 * 60 * 1000
+import http, { API_TIMEOUT } from './http'
 
 /**
- * 上传引擎包
+ * 上传引擎包（超时使用全局配置 API_TIMEOUT.ENGINE_UPLOAD = 1 小时）
  * @param {FormData} formData 字段：file（zip File）、version、remark
  * @returns {Promise<{code:number,message:string,data:Object}>} data 为 EnginePackageVO
  */
 export function upload(formData) {
   return http.post('/api/engines', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: ENGINE_UPLOAD_TIMEOUT_MS
+    timeout: API_TIMEOUT.ENGINE_UPLOAD
   })
 }
 
