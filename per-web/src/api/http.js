@@ -3,7 +3,16 @@
  * - 请求拦截：自动附加 Authorization: Bearer {token}
  * - 响应拦截：统一解析 {code,message,data} 结构，code!=0 时错误提示并 reject；
  *   HTTP 401 / 业务 code 401 时清除凭证并跳转登录页（含防重复跳转节流）
+ *
+ * 全局 API 超时配置集中在此管理（毫秒）：
+ * - API_TIMEOUT.DEFAULT          所有接口默认超时（60s）
+ * - API_TIMEOUT.ENGINE_UPLOAD    引擎包上传专用（zip 体积大 + 服务端校验耗时，放宽到 1 小时）
  */
+export const API_TIMEOUT = {
+  DEFAULT: 60000,
+  ENGINE_UPLOAD: 60 * 60 * 1000
+}
+
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/store/auth'
@@ -11,7 +20,7 @@ import router from '@/router'
 
 const http = axios.create({
   baseURL: '/',
-  timeout: 60000
+  timeout: API_TIMEOUT.DEFAULT
 })
 
 /** 上一次 401 处理时间戳，用于并发请求下的提示与跳转节流 */
