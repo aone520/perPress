@@ -23,12 +23,21 @@ DIST_ROOT="${AGENT_DIR}/target/dist"
 DIST_DIR="${DIST_ROOT}/perpress-agent"
 OUT_TGZ="${AGENT_DIR}/target/per-agent-dist.tar.gz"
 
-# ---------------------------------------------------------------------
-# [1/4] 编译打包 per-agent（跳过测试）
-# ---------------------------------------------------------------------
-echo "[1/4] 编译打包 per-agent ..."
+# 统一切到 agent 工程目录（后续 jar 定位/组装均按相对路径 target/ 执行）
 cd "${AGENT_DIR}"
-mvn -q clean package -DskipTests
+
+# ---------------------------------------------------------------------
+# [1/4] 编译打包 per-agent（跳过测试；PER_AGENT_SKIP_BUILD=1 时复用已有 jar，
+#       供 Docker 多阶段构建复用第一次 mvn 产物，避免重复编译）
+# ---------------------------------------------------------------------
+if [ "${PER_AGENT_SKIP_BUILD:-0}" = "1" ] \
+    && ls target/per-agent-*.jar >/dev/null 2>&1 \
+    && [ -n "$(ls target/per-agent-*.jar 2>/dev/null | grep -v 'sources' | head -n 1)" ]; then
+  echo "[1/4] 复用已有 per-agent jar（PER_AGENT_SKIP_BUILD=1）"
+else
+  echo "[1/4] 编译打包 per-agent ..."
+  mvn -q clean package -DskipTests
+fi
 
 # 定位 Spring Boot 可执行 jar（排除 sources 等附属产物）
 JAR_FILE="$(ls target/per-agent-*.jar 2>/dev/null | grep -v 'sources' | head -n 1 || true)"
