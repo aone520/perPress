@@ -132,6 +132,16 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="转表单脚本">
+          <div class="convert-wrap">
+            <el-switch v-model="importDialog.convertToForm" />
+            <span class="convert-tip">
+              开启后转换为平台表单脚本，可直接在脚本编辑器中修改；仅提取各线程组下的 HTTP 接口
+              （URL/方法/请求头/请求体/断言/提取器/参数文件/思考时间/全局变量），
+              逻辑控制器等无法映射的插件将被忽略并在导入后提醒
+            </span>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="importDialog.visible = false">取消</el-button>
@@ -178,7 +188,8 @@ const importDialog = reactive({
   file: null,
   name: '',
   description: '',
-  fileIds: []
+  fileIds: [],
+  convertToForm: false
 })
 
 /**
@@ -293,7 +304,8 @@ function openImportDialog() {
     file: null,
     name: '',
     description: '',
-    fileIds: []
+    fileIds: [],
+    convertToForm: false
   })
   loadFileOptions()
 }
@@ -307,7 +319,8 @@ function handleImportFileChange(uploadFile) {
 }
 
 /**
- * 提交导入 JMX：校验文件与名称后组装 multipart FormData 调用导入接口
+ * 提交导入 JMX：校验文件与名称后组装 multipart FormData 调用导入接口；
+ * 开启转换时响应携带 convertWarnings（被忽略的逻辑插件等），以弹窗逐条提醒
  */
 async function submitImport() {
   if (!importDialog.file) {
@@ -325,11 +338,27 @@ async function submitImport() {
   if (importDialog.fileIds.length) {
     formData.append('fileIds', importDialog.fileIds.join(','))
   }
+  if (importDialog.convertToForm) {
+    formData.append('convertToForm', 'true')
+  }
   importDialog.submitting = true
   try {
-    await importScript(formData)
+    const res = await importScript(formData)
     importDialog.visible = false
-    ElMessage.success('JMX 脚本导入成功')
+    ElMessage.success(importDialog.convertToForm ? 'JMX 已导入并转换为表单脚本' : 'JMX 脚本导入成功')
+    // 转换忽略项提醒：逐条列出被忽略的插件/内容
+    const warnings = res.data?.convertWarnings || []
+    if (warnings.length) {
+      const shown = warnings.slice(0, 20)
+          .map((w) => `· ${w}`)
+          .join('<br/>')
+      const more = warnings.length > 20 ? `<br/>… 另有 ${warnings.length - 20} 条省略` : ''
+      ElMessageBox.alert(
+          `<div class="convert-warnings">${shown}${more}</div>`,
+          `转换完成：${warnings.length} 项内容被忽略`,
+          { dangerouslyUseHTMLString: true, confirmButtonText: '知道了', type: 'warning' }
+      ).catch(() => {})
+    }
     page.value = 1
     await load()
   } catch {
@@ -344,6 +373,19 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 转表单开关行：开关 + 说明文案纵向排布 */
+.convert-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.convert-tip {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--pp-text-secondary, #909399);
+}
+
 .toolbar-card {
   margin-bottom: 16px;
 }

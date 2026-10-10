@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.per.server.common.BizException;
+import com.per.server.common.JmxFormConverter;
 import com.per.server.common.JmxThreadGroupParser;
 import com.per.server.common.UserContext;
 import com.per.server.dto.PageVO;
@@ -47,6 +48,7 @@ public class ScriptService {
     private final ScriptVersionMapper scriptVersionMapper;
     private final DataFileMapper dataFileMapper;
     private final FormScriptJmxBuilder jmxBuilder;
+    private final JmxFormConverter jmxFormConverter;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
@@ -76,15 +78,19 @@ public class ScriptService {
     /**
      * 导入 JMX 脚本：读取上传的 JMX 文件内容保存为版本 1；
      * 自动从 JMX 解析 CSVDataSet 引用的参数文件并关联 data_file，防止漏传 fileIds 导致任务分发遗漏。
+     * convertToForm=true 时走转换路径：JMX 解析为平台表单定义（FORM 类型），忽略逻辑控制器等
+     * 无法映射的插件（忽略项以 convertWarnings 返回前端提醒），版本 1 JMX 由表单渲染生成。
      *
-     * @param jmxFile     上传的 JMX 文件
-     * @param name        脚本名称
-     * @param description 脚本描述
-     * @param fileIds     关联文件 id（逗号分隔，可选，会与 JMX 自动解析的引用合并）
-     * @return 创建后的脚本信息
+     * @param jmxFile       上传的 JMX 文件
+     * @param name          脚本名称
+     * @param description   脚本描述
+     * @param fileIds       关联文件 id（逗号分隔，可选，会与自动解析的引用合并）
+     * @param convertToForm 是否转换为表单脚本（true=转换路径）
+     * @return 创建后的脚本信息（转换路径携带忽略项提醒）
      */
     @Transactional(rollbackFor = Exception.class)
-    public ScriptVO importScript(MultipartFile jmxFile, String name, String description, String fileIds) {
+    public ScriptVO importScript(MultipartFile jmxFile, String name, String description, String fileIds,
+                                 boolean convertToForm) {
         if (jmxFile == null || jmxFile.isEmpty()) {
             throw new BizException("jmxFile不能为空");
         }
@@ -93,6 +99,9 @@ public class ScriptService {
             jmxContent = new String(jmxFile.getBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new BizException("读取JMX文件失败：" + e.getMessage());
+        }
+        if (convertToForm) {
+            return importConvert(jmxContent, name, description, fileIds);
         }
         Script script = new Script();
         script.setName(name);
@@ -106,6 +115,42 @@ public class ScriptService {
         insertVersion(script.getId(), 1, jmxContent, mergedFileIds, "导入初始版本");
         auditService.record("IMPORT_SCRIPT", "导入脚本 " + name);
         return toVO(script);
+    }
+
+    /**
+     * 导入转换路径：JMX → 平台表单定义 → FORM 脚本（版本 1 JMX 由表单渲染生成）；
+     * CSV 参数文件按文件名匹配文件库填入 csvRefs，匹配不到的记入忽略提醒
+     *
+     * @param jmxContent  JMX 文本
+     * @param name        脚本名称
+     * @param description 脚本描述
+     * @param fileIds     显式关联文件 id（逗号分隔，可选）
+     * @return 脚本信息（含忽略项提醒）
+     */
+    private ScriptVO importConvert(String jmxContent, String name, String description, String fileIds) {
+        // 文件库名称 → id 映射（CSVDataSet filename 匹配用）
+        Map<String, Long> fileNameToId = new HashMap<>();
+        for (DataFile file : dataFileMapper.selectList(null)) {
+            if (file.getName() != null) {
+                fileNameToId.put(file.getName(), file.getId());
+            }
+        }
+        JmxFormConverter.ConvertResult result = jmxFormConverter.convert(jmxContent, fileNameToId);
+        ScriptFormRequest.FormDef formDef = result.formDef();
+        validateFormDef(formDef);
+        Script script = new Script();
+        script.setName(name);
+        script.setDescription(description);
+        script.setType(Script.TYPE_FORM);
+        script.setFormDef(writeJson(formDef));
+        script.setLatestVersion(1);
+        script.setCreateBy(currentUsername());
+        scriptMapper.insert(script);
+        insertVersion(script.getId(), 1, renderJmx(formDef), mergeFileIds(fileIds, formDef), "JMX 导入转换初始版本");
+        auditService.record("IMPORT_SCRIPT_CONVERT", "导入并转换 JMX 脚本 " + name);
+        ScriptVO vo = toVO(script);
+        vo.setConvertWarnings(result.warnings());
+        return vo;
     }
 
     /**
