@@ -57,8 +57,15 @@
         <el-table-column label="上传时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right" align="center">
+        <el-table-column label="操作" width="170" fixed="right" align="center">
           <template #default="{ row }">
+            <el-button
+              v-if="row.fileType === 'CSV' || row.fileType === 'TXT'"
+              link
+              type="primary"
+              @click="handlePreview(row)"
+            >预览</el-button>
+            <el-button link type="primary" @click="handleDownload(row)">下载</el-button>
             <el-button link type="danger" @click="handleRemove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -108,6 +115,43 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 文件预览对话框：CSV 按分隔符渲染表格（首行为表头），TXT 以纯文本展示 -->
+    <el-dialog
+      v-model="previewDialog.visible"
+      :title="`预览：${previewDialog.name || ''}`"
+      width="860px"
+      destroy-on-close
+    >
+      <div v-loading="previewDialog.loading" class="preview-body">
+        <template v-if="!previewDialog.loading">
+          <!-- CSV：探测分隔符（制表符/逗号）后渲染表格，首行作表头 -->
+          <template v-if="previewDialog.fileType === 'CSV' && previewDialog.columns.length">
+            <el-table :data="previewDialog.rows" size="small" border max-height="480">
+              <el-table-column
+                v-for="(col, idx) in previewDialog.columns"
+                :key="idx"
+                :prop="String(idx)"
+                :label="col"
+                min-width="120"
+                show-overflow-tooltip
+              />
+            </el-table>
+          </template>
+          <!-- TXT：等宽字体纯文本 -->
+          <pre v-else class="txt-preview">{{ previewDialog.lines.join('\n') }}</pre>
+          <div v-if="previewDialog.truncated" class="preview-truncated">
+            仅展示前 {{ previewDialog.lines.length }} 行，完整内容请下载查看
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="previewDialog.visible = false">关闭</el-button>
+        <el-button type="primary" :disabled="previewDialog.loading" @click="handleDownload(previewDialog.row)">
+          下载完整文件
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -115,7 +159,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { Upload, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { page as pageFiles, upload as uploadFile, removeFile } from '@/api/file'
+import { page as pageFiles, upload as uploadFile, removeFile, previewFile, downloadFile } from '@/api/file'
 import { formatDateTime, formatBytes } from '@/utils/format'
 
 /** 文件类型元信息：tag 颜色（CSV success / TXT primary / JAR warning / BIN info） */
@@ -144,6 +188,81 @@ const uploadDialog = reactive({
   submitting: false,
   file: null
 })
+
+/** 预览对话框状态：lines 原始行、columns/rows 为 CSV 表格化结果 */
+const previewDialog = reactive({
+  visible: false,
+  loading: false,
+  row: null,
+  name: '',
+  fileType: '',
+  truncated: false,
+  lines: [],
+  columns: [],
+  rows: []
+})
+
+/**
+ * 打开预览：调用预览接口取前 100 行；CSV 自动探测分隔符（制表符优先于逗号），
+ * 首行作表头、其余行为数据，列数以表头为准
+ * @param {Object} row 文件行数据
+ */
+async function handlePreview(row) {
+  Object.assign(previewDialog, {
+    visible: true,
+    loading: true,
+    row,
+    name: row.name,
+    fileType: row.fileType,
+    truncated: false,
+    lines: [],
+    columns: [],
+    rows: []
+  })
+  try {
+    const res = await previewFile(row.id)
+    const lines = res.data?.lines || []
+    previewDialog.lines = lines
+    previewDialog.truncated = Boolean(res.data?.truncated)
+    if (row.fileType === 'CSV' && lines.length) {
+      // 分隔符探测：首行含制表符且多于逗号分隔列时用 \t，否则用逗号
+      const first = lines[0]
+      const tabCols = first.split('\t')
+      const commaCols = first.split(',')
+      const delimiter = tabCols.length > commaCols.length ? '\t' : ','
+      previewDialog.columns = tabCols.length > commaCols.length ? tabCols : commaCols
+      const colCount = previewDialog.columns.length
+      previewDialog.rows = lines.slice(1).map((line) => {
+        const cells = line.split(delimiter)
+        const record = {}
+        for (let i = 0; i < colCount; i++) {
+          record[String(i)] = cells[i] ?? ''
+        }
+        return record
+      })
+    }
+  } catch {
+    previewDialog.visible = false
+  } finally {
+    previewDialog.loading = false
+  }
+}
+
+/**
+ * 下载文件：blob 拉取后触发浏览器保存，成功轻提示
+ * @param {Object} row 文件行数据
+ */
+async function handleDownload(row) {
+  if (!row) {
+    return
+  }
+  try {
+    await downloadFile(row.id, row.name)
+    ElMessage.success('文件下载已开始')
+  } catch (e) {
+    ElMessage.error(e.message || '下载失败')
+  }
+}
 
 /**
  * 加载文件列表：按分页参数请求后端；选择了类型时优先传 fileType 参数由后端过滤，
@@ -297,5 +416,32 @@ onMounted(load)
 
 .md5-cell {
   cursor: default;
+}
+
+/* 预览对话框正文最小高度（loading 态不塌陷） */
+.preview-body {
+  min-height: 160px;
+}
+
+/* TXT 纯文本预览：等宽字体 + 滚动 */
+.txt-preview {
+  margin: 0;
+  max-height: 480px;
+  overflow: auto;
+  font-family: var(--font-mono, 'SFMono-Regular', Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--el-fill-color-light);
+  padding: 12px;
+  border-radius: 6px;
+}
+
+/* 截断提示条 */
+.preview-truncated {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--el-color-warning);
 }
 </style>

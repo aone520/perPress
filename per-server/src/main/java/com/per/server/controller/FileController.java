@@ -1,6 +1,7 @@
 package com.per.server.controller;
 
 import com.per.server.common.R;
+import com.per.server.dto.FilePreviewVO;
 import com.per.server.dto.FileVO;
 import com.per.server.dto.PageVO;
 import com.per.server.service.DataFileService;
@@ -58,5 +59,28 @@ public class FileController {
     public R<Void> delete(@PathVariable Long id) {
         dataFileService.delete(id);
         return R.ok();
+    }
+
+    /**
+     * 文本文件预览（仅 CSV/TXT）：返回前 100 行内容，超限截断标记 truncated
+     *
+     * @param id 文件ID
+     * @return 预览内容
+     */
+    @GetMapping("/{id}/preview")
+    public R<FilePreviewVO> preview(@PathVariable Long id) {
+        return R.ok(dataFileService.preview(id));
+    }
+
+    /**
+     * 文件下载：以原始文件名返回文件流（直接返回二进制，不走统一响应包装）
+     *
+     * @param id 文件ID
+     * @return 文件流响应
+     */
+    @GetMapping("/{id}/download")
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> download(
+            @PathVariable Long id) {
+        return dataFileService.download(id);
     }
 }

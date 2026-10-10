@@ -4,15 +4,27 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.per.server.common.BizException;
 import com.per.server.common.UserContext;
+import com.per.server.dto.FilePreviewVO;
 import com.per.server.dto.FileVO;
 import com.per.server.dto.PageVO;
 import com.per.server.entity.DataFile;
 import com.per.server.mapper.DataFileMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 
 /**
@@ -98,6 +110,78 @@ public class DataFileService {
             throw new BizException("数据文件不存在");
         }
         return file;
+    }
+
+    /** 预览最大行数（超出截断，完整内容走下载） */
+    private static final int PREVIEW_MAX_LINES = 100;
+
+    /** 单行预览最大字符数（超长行截断，防止巨型单行拖垮前端） */
+    private static final int PREVIEW_MAX_LINE_CHARS = 2000;
+
+    /**
+     * 文本文件预览：仅支持 CSV/TXT，读取前 100 行（单行超 2000 字符截断）
+     *
+     * @param id 文件ID
+     * @return 预览内容（行列表 + 截断标记）
+     */
+    public FilePreviewVO preview(Long id) {
+        DataFile file = requireById(id);
+        if (!"CSV".equals(file.getFileType()) && !"TXT".equals(file.getFileType())) {
+            throw new BizException("仅支持 CSV/TXT 文本文件预览，二进制文件请下载后查看");
+        }
+        Path path = Paths.get(file.getStoragePath());
+        if (!Files.exists(path)) {
+            throw new BizException("文件内容不存在（磁盘数据可能已被清理）");
+        }
+        List<String> lines = new java.util.ArrayList<>();
+        boolean truncated = false;
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (lines.size() >= PREVIEW_MAX_LINES) {
+                    truncated = true;
+                    break;
+                }
+                lines.add(line.length() > PREVIEW_MAX_LINE_CHARS
+                        ? line.substring(0, PREVIEW_MAX_LINE_CHARS) + "…" : line);
+            }
+        } catch (IOException e) {
+            throw new BizException("读取文件失败：" + e.getMessage());
+        }
+        FilePreviewVO vo = new FilePreviewVO();
+        vo.setId(file.getId());
+        vo.setName(file.getName());
+        vo.setFileType(file.getFileType());
+        vo.setSize(file.getSize());
+        vo.setLines(lines);
+        vo.setTruncated(truncated);
+        return vo;
+    }
+
+    /**
+     * 文件下载：以原始文件名（UTF-8 编码 Content-Disposition）返回文件流
+     *
+     * @param id 文件ID
+     * @return 文件流响应
+     */
+    public ResponseEntity<Resource> download(Long id) {
+        DataFile file = requireById(id);
+        Path path = Paths.get(file.getStoragePath());
+        if (!Files.exists(path)) {
+            throw new BizException("文件内容不存在（磁盘数据可能已被清理）");
+        }
+        long size;
+        try {
+            size = Files.size(path);
+        } catch (IOException e) {
+            throw new BizException("读取文件失败：" + e.getMessage());
+        }
+        String encodedName = java.net.URLEncoder.encode(file.getName(), StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(size)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName)
+                .body(new FileSystemResource(path));
     }
 
     /**

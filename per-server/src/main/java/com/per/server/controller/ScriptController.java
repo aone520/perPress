@@ -53,20 +53,24 @@ public class ScriptController {
     }
 
     /**
-     * 导入 JMX 脚本（multipart：jmxFile + name + description + fileIds 可选逗号分隔），保存为版本 1
+     * 导入 JMX 脚本（multipart：jmxFile + name + description + fileIds 可选逗号分隔 + convertToForm），保存为版本 1；
+     * convertToForm=true 时转换为平台表单脚本（FORM 类型，可直接在脚本编辑器修改），
+     * 无法映射的逻辑插件被忽略并在响应 convertWarnings 中提醒
      *
-     * @param jmxFile     上传的 JMX 文件
-     * @param name        脚本名称
-     * @param description 脚本描述（可选）
-     * @param fileIds     关联文件 id（逗号分隔，可选）
+     * @param jmxFile       上传的 JMX 文件
+     * @param name          脚本名称
+     * @param description   脚本描述（可选）
+     * @param fileIds       关联文件 id（逗号分隔，可选）
+     * @param convertToForm 是否转换为表单脚本（默认 false 原样导入）
      * @return 创建后的脚本信息
      */
     @PostMapping("/import")
     public R<ScriptVO> importScript(@RequestParam("jmxFile") MultipartFile jmxFile,
                                     @RequestParam String name,
                                     @RequestParam(required = false) String description,
-                                    @RequestParam(required = false) String fileIds) {
-        return R.ok(scriptService.importScript(jmxFile, name, description, fileIds));
+                                    @RequestParam(required = false) String fileIds,
+                                    @RequestParam(defaultValue = "false") boolean convertToForm) {
+        return R.ok(scriptService.importScript(jmxFile, name, description, fileIds, convertToForm));
     }
 
     /**
